@@ -170,7 +170,11 @@ program
     const client = getClient(dbPath);
     await client.connect();
     const stats = await client.stats();
-    console.log(`\n📊 ${stats.services} services, ${Math.floor(stats.totalChars / 1000)}K chars\n`);
+    const { nodes } = await client.loadGraph();
+    const services = nodes.filter(n => n.type === "Service").length;
+    console.log(`\n📊 ${stats.services} docs, ${stats.flows} flows, ${stats.notes} notes, ${Math.floor(stats.totalChars / 1000)}K chars`);
+    if (services > 0) console.log(`🔗 Graph: ${services} services, ${nodes.length} nodes, ${nodes.filter(n=>n.type==='API').length} APIs`);
+    console.log();
   });
 
 program

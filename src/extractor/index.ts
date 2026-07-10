@@ -91,6 +91,24 @@ export async function discoverServices(rootPath: string, dbPath: string) {
 
     console.log(`   ${svcName}: ${analysis.apis.length} APIs, ${analysis.models.length} models, ${analysis.events.length} events`);
 
+    // Auto-index a basic doc for the service
+    const docContent = `## Overview
+${svcName} — ${analysis.language} service with ${analysis.apis.length} API endpoints, ${analysis.models.length} models, and ${analysis.events.length} event handlers.
+
+## APIs
+${analysis.apis.slice(0, 10).map(a => `- ${a.method} ${a.path} \`${a.fileRef}\``).join("\n")}
+
+## Models
+${analysis.models.slice(0, 15).map(m => `- ${m.name} (\`${m.fileRef}\`)`).join("\n")}
+
+## Events
+${analysis.events.slice(0, 10).map(e => `- ${e.direction} ${e.name} (\`${e.fileRef}\`)`).join("\n")}
+`;
+    await client.indexDoc({
+      id: svcName, serviceName: svcName, servicePath: svcRelPath, language: analysis.language,
+      sections: {}, content: docContent, indexedAt: Date.now(),
+    });
+
     // Dependency edges
     for (const dep of deps) {
       const depSvc = services.find(s => basename(s) === basename(dep));
