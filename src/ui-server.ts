@@ -403,14 +403,16 @@ async function loadSvcFlows(page){
 
 async function loadFlows(page){
   if(typeof page==='number')state.page=page;
+  var typeFilter=document.getElementById('flowTypeFilter')?.value||'';
   var params='?offset='+(state.page*state.limit)+'&limit='+state.limit;
   if(state.svc)params+='&service='+encodeURIComponent(state.svc);
+  if(typeFilter)params+='&type='+encodeURIComponent(typeFilter);
   var data=await api('/api/flows'+params);
   var p=document.getElementById('flowsPanel');
   if(!data||!data.flows.length){p.innerHTML='<div class="empty">No flows.</div>';return;}
   p.innerHTML='<div class="filter-bar">'+
-    '<select id="flowTypeFilter" onchange="loadFlows(0)" style="margin-right:8px">'+
-    '<option value="">All types</option><option value="happy_path">Happy Path</option><option value="error_path">Error Path</option><option value="edge_case">Edge Case</option><option value="recovery">Recovery</option><option value="state_machine">State Machine</option><option value="saga">Saga</option></select>'+
+    '<select id="flowTypeFilter" onchange="state.page=0;loadFlows(0)" style="margin-right:8px">'+
+    '<option value="">All types</option><option value="happy_path"'+(typeFilter==='happy_path'?' selected':'')+'>Happy Path</option><option value="error_path"'+(typeFilter==='error_path'?' selected':'')+'>Error Path</option><option value="edge_case"'+(typeFilter==='edge_case'?' selected':'')+'>Edge Case</option><option value="recovery"'+(typeFilter==='recovery'?' selected':'')+'>Recovery</option><option value="state_machine"'+(typeFilter==='state_machine'?' selected':'')+'>State Machine</option><option value="saga"'+(typeFilter==='saga'?' selected':'')+'>Saga</option></select>'+
     '<button class="small" onclick="toggleAllFlows()">Expand All</button></div>'+
     renderFlowCards(data.flows)+renderPagination(data.total,'loadFlows');
   p.querySelectorAll('code.language-mermaid').forEach(function(b){var pr=b.parentElement;pr.className='mermaid';pr.textContent=b.textContent;});
