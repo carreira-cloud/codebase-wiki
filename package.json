@@ -6,7 +6,7 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "codebase-wiki": "./dist/cli.js"
+    "codebase-wiki": "./bin/codebase-wiki"
   },
   "files": [
     "dist",
