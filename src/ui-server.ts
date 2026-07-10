@@ -198,6 +198,14 @@ header h1 { font-size: 20px; }
 const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
 let currentService = new URLSearchParams(location.search).get('service') || '';
 
+// Delegated click handler for service cards
+document.addEventListener('click', function(e) {
+  const card = e.target.closest('[data-service]');
+  if (card) {
+    navigateTo(location.origin + '?service=' + encodeURIComponent(card.getAttribute('data-service')));
+  }
+});
+
 async function api(path) {
   const r = await fetch(path);
   return r.ok ? r.json() : null;
@@ -242,7 +250,7 @@ async function loadServices() {
     return;
   }
   p.innerHTML = services.map(s =>
-    '<div class="card" onclick="navigateTo(location.origin + \'?service=\' + encodeURIComponent(esc(\'' + s.name + '\')))" style="cursor:pointer">' +
+    '<div class="card" data-service="' + esc(s.name) + '" style="cursor:pointer">' +
     '<h3>' + esc(s.name) + '</h3>' +
     '<div class="meta">' + esc(s.path) + ' | ' + Math.floor(s.size/1000) + 'K chars</div>' +
     '</div>'
@@ -300,7 +308,7 @@ async function search() {
   if (data.docs && data.docs.length) {
     html += '<h4 style="color:var(--text2);margin-bottom:8px">Services</h4>';
     html += data.docs.map(d =>
-      '<div class="card" onclick="navigateTo(location.origin + \'?service=\' + encodeURIComponent(esc(\'' + d.serviceName + '\')))" style="cursor:pointer">' +
+      '<div class="card" data-service="' + esc(d.serviceName) + '" style="cursor:pointer">' +
       '<h3>' + esc(d.serviceName) + '</h3>' +
       '<div class="preview">' + esc(d.content.slice(0, 150).replace(/\\n/g, ' ')) + '...</div>' +
       '</div>'
