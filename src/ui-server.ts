@@ -536,6 +536,9 @@ async function loadMetrics(){
     (toolRows?'<h4 style="margin-bottom:8px;color:var(--text2)">By Tool</h4><table style="width:100%;margin-bottom:20px;border-collapse:collapse"><tr style="border-bottom:1px solid var(--border)"><th style="text-align:left;padding:4px 8px">Tool</th><th style="text-align:right;padding:4px 8px">Calls</th></tr>'+toolRows+'</table>':'')+
     (sessionRows?'<h4 style="margin-bottom:8px;color:var(--text2)">By Session (top 10)</h4><table style="width:100%;border-collapse:collapse"><tr style="border-bottom:1px solid var(--border)"><th style="text-align:left;padding:4px 8px">Session</th><th style="text-align:right;padding:4px 8px">Calls</th><th style="text-align:right;padding:4px 8px">In</th><th style="text-align:right;padding:4px 8px">Out</th></tr>'+sessionRows+'</table>':'');
 }
+}
+
+async function doSearch(page){
   if(typeof page==='number')state.page=page;
   var q=document.getElementById('searchInput').value.trim();
   if(!q)return;
