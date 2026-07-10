@@ -149,6 +149,53 @@ const TOOLS = [
       },
     },
   },
+  {
+    name: "wiki_graph_query",
+    description: "Query the architecture graph — traverse from a node by edge type",
+    inputSchema: {
+      type: "object",
+      properties: {
+        start_id: { type: "string", description: "Starting node ID (e.g. service:oms-microservice)" },
+        edge_type: { type: "string", description: "Edge type to traverse (HAS_API, HAS_FLOW, DEPENDS_ON, etc.)" },
+      },
+      required: ["start_id"],
+    },
+  },
+  {
+    name: "wiki_graph_trace",
+    description: "Find the shortest path between two graph nodes",
+    inputSchema: {
+      type: "object",
+      properties: {
+        from_id: { type: "string" },
+        to_id: { type: "string" },
+      },
+      required: ["from_id", "to_id"],
+    },
+  },
+  {
+    name: "wiki_graph_impact",
+    description: "Analyze blast radius — find upstream and downstream dependencies from a service",
+    inputSchema: {
+      type: "object",
+      properties: {
+        service_id: { type: "string", description: "Service node ID (e.g. service:oms-microservice)" },
+        depth: { type: "number", "default": 2, description: "How many hops to traverse" },
+      },
+      required: ["service_id"],
+    },
+  },
+  {
+    name: "wiki_graph_file",
+    description: "Find all graph nodes that reference a specific source file",
+    inputSchema: {
+      type: "object",
+      properties: {
+        file_path: { type: "string", description: "File path or partial match" },
+      },
+      required: ["file_path"],
+    },
+  },
 ];
 
 export async function handleMCPRequest(request: string): Promise<string> {
@@ -326,6 +373,38 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<st
         service: f.serviceName, flow: f.flowName, type: f.flowType,
         keywords: f.keywords, linked: f.linkedServices,
       })), null, 2);
+    }
+
+    case "wiki_graph_query": {
+      const nodes = await client.graphQuery(args.start_id as string, (args.edge_type as string) || undefined);
+      return JSON.stringify(nodes.map(n => ({ id: n.id, type: n.type, ...n.data })), null, 2);
+    }
+
+    case "wiki_graph_trace": {
+      const path = await client.graphTrace(args.from_id as string, args.to_id as string);
+      if (path.length === 0) return "No path found";
+      return path.map((n, i) => `${i === 0 ? "" : " → "}[${n.type}] ${n.data.name || n.data.path || n.id}`).join("");
+    }
+
+    case "wiki_graph_impact": {
+      const svcId = args.service_id as string;
+      const depth = (args.depth as number) || 2;
+      const impact = await client.graphImpact(svcId, depth);
+      return JSON.stringify({
+        downstream: impact.downstream.length + " nodes",
+        upstream: impact.upstream.length + " nodes",
+        downstream_nodes: impact.downstream.map(n => ({ id: n.id, type: n.type, ...n.data })),
+        upstream_nodes: impact.upstream.map(n => ({ id: n.id, type: n.type, ...n.data })),
+      }, null, 2);
+    }
+
+    case "wiki_graph_file": {
+      const { nodes } = await client.loadGraph();
+      const matches = nodes.filter(n =>
+        ((n.data.fileRef || n.data.path || "") as string).includes(args.file_path as string) ||
+        n.id.includes(args.file_path as string)
+      );
+      return JSON.stringify(matches.map(n => ({ id: n.id, type: n.type, ...n.data })), null, 2);
     }
 
     default:

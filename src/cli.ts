@@ -7,6 +7,7 @@ import { createInterface } from "node:readline";
 import { handleMCPRequest } from "./mcp-server";
 import { getClient } from "./lancedb/client";
 import { startUIServer } from "./ui-server";
+import { discoverServices } from "./extractor/index";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -61,6 +62,60 @@ program
     const server = await startUIServer(port, dbPath);
     console.log(`   Press Ctrl+C to stop.\n`);
     process.on("SIGINT", () => { server.stop(); process.exit(0); });
+  });
+
+program
+  .command("discover")
+  .description("Full auto-discovery: scan repo, extract APIs/models/events, build graph, index flows")
+  .action(async () => {
+    const rootPath = process.cwd();
+    const dbPath = join(rootPath, ".codebase-wiki/rag_db");
+    console.log("\n🔍 Full discovery scan...\n");
+    const result = await discoverServices(rootPath, dbPath);
+    console.log(`\n✔ Graph built: ${result.nodes} nodes, ${result.edges} edges`);
+    console.log(`   ${result.services} services, ${result.apis} APIs, ${result.models} models, ${result.events} events\n`);
+  });
+
+program
+  .command("watch")
+  .description("Watch for file changes and auto-update the knowledge base")
+  .option("-d, --debounce <ms>", "Debounce in ms", "10000")
+  .action(async (options: { debounce: string }) => {
+    const rootPath = process.cwd();
+    const dbPath = join(rootPath, ".codebase-wiki/rag_db");
+    const debounce = parseInt(options.debounce, 10);
+
+    console.log(`\n👁️  Watching for changes (debounce: ${debounce}ms)...\n`);
+    console.log("   (Changes to .go/.ts/.kt files will trigger re-indexing)\n");
+
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let changedFiles = new Set<string>();
+
+    // Simple polling watcher (no chokidar dependency needed)
+    const { watch } = require("node:fs") as typeof import("node:fs");
+    try {
+      const watcher = watch(rootPath, { recursive: true }, (_event, filename) => {
+        if (!filename || filename.includes("node_modules") || filename.includes(".git")) return;
+        if (!/\.(go|ts|tsx|kt|yaml|yml)$/.test(filename)) return;
+        changedFiles.add(filename);
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(async () => {
+          const files = [...changedFiles];
+          changedFiles = new Set();
+          console.log(`\n📝 Changed: ${files.slice(0, 5).join(", ")}${files.length > 5 ? " +" + (files.length - 5) + " more" : ""}`);
+          console.log("   Re-indexing...");
+          const result = await discoverServices(rootPath, dbPath);
+          console.log(`   ✔ ${result.services} services, ${result.apis} APIs, ${result.models} models\n`);
+        }, debounce);
+      });
+      process.on("SIGINT", () => { watcher.close(); process.exit(0); });
+    } catch (e) {
+      console.log(`   Polling fallback: re-scan every ${Math.floor(debounce / 1000)}s`);
+      setInterval(async () => {
+        const result = await discoverServices(rootPath, dbPath);
+        console.log(`   Re-scan: ${result.services} services, ${result.apis} APIs`);
+      }, debounce * 6);
+    }
   });
 
 program

@@ -21,6 +21,36 @@ export interface WikiFlow {
   indexedAt: number;
 }
 
+// --- Graph types ---
+
+export type GraphNodeType = "Service" | "API" | "Model" | "Flow" | "FlowStep" | "Event" | "File";
+
+export type GraphEdgeType = "HAS_API" | "HAS_MODEL" | "HAS_FLOW" | "DEPENDS_ON" |
+  "STEP" | "REFERENCES" | "CALLS" | "TRIGGERS" | "COMPENSATES" | "PRODUCES" | "CONSUMES";
+
+export interface GraphNode {
+  id: string;
+  type: GraphNodeType;
+  data: Record<string, unknown>;
+}
+
+export interface GraphEdge {
+  from: string;
+  to: string;
+  type: GraphEdgeType;
+  data?: Record<string, unknown>;
+}
+
+export interface ServiceAnalysis {
+  serviceName: string;
+  servicePath: string;
+  language: string;
+  apis: { method: string; path: string; handler: string; fileRef: string; auth: string }[];
+  models: { name: string; fields: string; storage: string; fileRef: string }[];
+  events: { name: string; direction: string; protocol: string; fileRef: string }[];
+  dependencies: string[];
+}
+
 export interface WikiNote {
   id: string;
   type: "pattern" | "gotcha" | "integration" | "convention" | "decision" | "tip";

@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import type { WikiDoc, WikiNote, WikiFlow } from "../types";
+import type { WikiDoc, WikiNote, WikiFlow, GraphNode, GraphEdge } from "../types";
 
 interface Row {
   [key: string]: unknown;
@@ -153,6 +153,96 @@ export class LanceDBClient {
       content: r.content as string,
       indexedAt: r.indexed_at as number,
     }));
+  }
+
+  async saveGraph(nodes: GraphNode[], edges: GraphEdge[]): Promise<void> {
+    const np = this.tablePath("nodes");
+    const ep = this.tablePath("edges");
+    writeFileSync(np, JSON.stringify(nodes), "utf-8");
+    writeFileSync(ep, JSON.stringify(edges), "utf-8");
+  }
+
+  async loadGraph(): Promise<{ nodes: GraphNode[]; edges: GraphEdge[] }> {
+    const nodes = this.readTable("nodes") as unknown as GraphNode[];
+    const edges = this.readTable("edges") as unknown as GraphEdge[];
+    return { nodes, edges: edges || [] };
+  }
+
+  async graphQuery(startId: string, edgeType?: string): Promise<GraphNode[]> {
+    const { nodes, edges } = await this.loadGraph();
+    const nodeMap = new Map(nodes.map(n => [n.id, n]));
+    const matches = edges
+      .filter(e => e.from === startId && (!edgeType || e.type === edgeType))
+      .map(e => nodeMap.get(e.to))
+      .filter((n): n is GraphNode => !!n);
+    return matches;
+  }
+
+  async graphTrace(fromId: string, toId: string): Promise<GraphNode[]> {
+    const { nodes, edges } = await this.loadGraph();
+    const nodeMap = new Map(nodes.map(n => [n.id, n]));
+    const adj = new Map<string, string[]>();
+    for (const e of edges) {
+      if (!adj.has(e.from)) adj.set(e.from, []);
+      adj.get(e.from)!.push(e.to);
+    }
+    // BFS path
+    const visited = new Set<string>();
+    const parent = new Map<string, string>();
+    const queue = [fromId];
+    visited.add(fromId);
+    while (queue.length > 0) {
+      const curr = queue.shift()!;
+      if (curr === toId) break;
+      for (const next of (adj.get(curr) || [])) {
+        if (!visited.has(next)) {
+          visited.add(next);
+          parent.set(next, curr);
+          queue.push(next);
+        }
+      }
+    }
+    const path: GraphNode[] = [];
+    let curr: string | undefined = toId;
+    while (curr) {
+      const n = nodeMap.get(curr);
+      if (n) path.unshift(n);
+      curr = parent.get(curr);
+    }
+    return path.length > 0 && path[0].id === fromId ? path : [];
+  }
+
+  async graphImpact(serviceId: string, depth: number): Promise<{ upstream: GraphNode[]; downstream: GraphNode[] }> {
+    const { nodes, edges } = await this.loadGraph();
+    const nodeMap = new Map(nodes.map(n => [n.id, n]));
+
+    function bfs(start: string, forward: boolean, maxDepth: number): GraphNode[] {
+      const result: GraphNode[] = [];
+      const visited = new Set<string>();
+      const queue: { id: string; d: number }[] = [{ id: start, d: 0 }];
+      visited.add(start);
+      while (queue.length > 0) {
+        const { id, d } = queue.shift()!;
+        if (d >= maxDepth) continue;
+        const adj = forward
+          ? edges.filter(e => e.from === id).map(e => e.to)
+          : edges.filter(e => e.to === id).map(e => e.from);
+        for (const next of adj) {
+          if (!visited.has(next)) {
+            visited.add(next);
+            const n = nodeMap.get(next);
+            if (n) result.push(n);
+            queue.push({ id: next, d: d + 1 });
+          }
+        }
+      }
+      return result;
+    }
+
+    return {
+      downstream: bfs(serviceId, true, depth),
+      upstream: bfs(serviceId, false, depth),
+    };
   }
 
   async stats(): Promise<{ services: number; totalChars: number; notes: number; flows: number }> {
