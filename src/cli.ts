@@ -35,6 +35,25 @@ program
 
     process.stderr.write("codebase-wiki MCP server ready\n");
 
+    // Print startup context so agents know what's available
+    const dbPath = join(process.cwd(), ".codebase-wiki/rag_db");
+    try {
+      const client = getClient(dbPath);
+      client.connect().then(async () => {
+        const stats = await client.stats();
+        const notes = await client.listNotes();
+        const recent = notes.filter(n => n.status !== "proposed").slice(0, 5);
+        process.stderr.write(`   📚 ${stats.services} services, ${stats.flows||0} flows, ${stats.notes} notes | ${Math.floor(stats.totalChars/1000)}K chars\n`);
+        if (recent.length) {
+          process.stderr.write("   🧠 Recent notes:\n");
+          for (const n of recent) {
+            process.stderr.write(`      [${n.type}] ${n.topic.slice(0, 60)}\n`);
+          }
+        }
+        process.stderr.write("   💡 Use wiki_search/wiki_get/wiki_notes_search before planning or debugging.\n");
+      });
+    } catch { /* fail-open */ }
+
     rl.on("close", () => process.exit(0));
   });
 
