@@ -265,18 +265,16 @@ async function loadService(name) {
     p.innerHTML = '<div class="empty">Documentation not found for "' + esc(name) + '"</div>';
     return;
   }
-  let content = doc.content.replace(/^# /gm, '## '); 
-  // Convert markdown headings, code blocks, and lists to HTML
-  content = content
+  let content = doc.content
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
     .replace(/\*(.*?)\*/g, '<em>$1</em>')
     .replace(/^### (.*$)/gm, '<h3>$1</h3>')
     .replace(/^## (.*$)/gm, '<h2>$1</h2>')
     .replace(/^# (.*$)/gm, '<h1>$1</h1>')
     .replace(/^- (.*$)/gm, '<li>$1</li>')
-    .replace(/((?:<li>.*<\/li>\n?)+)/g, '<ul>$1</ul>')
-    .replace(/\n\n/g, '</p><p>')
-    .replace(/\n/g, '<br>');
+    .replace(/\\n\\n/g, '<br><br>')
+    .replace(/\\n/g, '<br>');
   p.innerHTML = '<div class="service-content"><a href="?" style="font-size:13px">← Back to all services</a><br><br>' + content + '</div>';
 }
 
