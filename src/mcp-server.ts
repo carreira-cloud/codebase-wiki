@@ -120,8 +120,9 @@ const TOOLS = [
         summary: { type: "string", description: "One-line description of the flow" },
         keywords: { type: "string", description: "Comma-separated keywords for discoverability" },
         linked_services: { type: "string", description: "Comma-separated services involved in this flow" },
-        flow_type: { type: "string", description: "happy_path, error_path, edge_case, recovery, or full" },
+        flow_type: { type: "string", description: "happy_path, error_path, edge_case, recovery, full, or state_machine" },
         content: { type: "string", description: "Mermaid diagram + text description" },
+        file_refs: { type: "string", description: "Comma-separated source file paths referenced by this flow (e.g. 'src/handler/checkout.go:45,src/service/order.go:120')" },
       },
       required: ["service_name", "flow_name", "content"],
     },
@@ -353,7 +354,9 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<st
         keywords: typeof args.keywords === "string" ? args.keywords.split(",").map((k: string) => k.trim()) : [],
         linkedServices: typeof args.linked_services === "string" ? args.linked_services.split(",").map((s: string) => s.trim()) : [],
         flowType: (args.flow_type as WikiFlow["flowType"]) || "happy_path",
-        content: args.content as string, indexedAt: Date.now(),
+        content: args.content as string,
+        fileRefs: typeof args.file_refs === "string" ? args.file_refs.split(",").map((f: string) => f.trim()) : [],
+        indexedAt: Date.now(),
       });
       return `Flow indexed: "${args.flow_name}" [${args.flow_type}]`;
     }
@@ -364,6 +367,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<st
       return JSON.stringify(filtered.map(f => ({
         service: f.serviceName, flow: f.flowName, type: f.flowType,
         summary: f.summary, keywords: f.keywords, linked: f.linkedServices,
+        files: f.fileRefs,
       })), null, 2);
     }
 
@@ -372,6 +376,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<st
       return JSON.stringify(flows.map(f => ({
         service: f.serviceName, flow: f.flowName, type: f.flowType,
         keywords: f.keywords, linked: f.linkedServices,
+        files: f.fileRefs,
       })), null, 2);
     }
 

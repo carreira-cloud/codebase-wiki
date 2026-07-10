@@ -16,8 +16,9 @@ export interface WikiFlow {
   summary: string;
   keywords: string[];
   linkedServices: string[];
-  flowType: "happy_path" | "error_path" | "edge_case" | "recovery" | "full";
+  flowType: "happy_path" | "error_path" | "edge_case" | "recovery" | "full" | "state_machine";
   content: string;
+  fileRefs: string[];
   indexedAt: number;
 }
 

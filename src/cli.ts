@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { Command } from "commander";
-import { existsSync, mkdirSync, readdirSync, statSync, copyFileSync, watch } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, statSync, copyFileSync, watch, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
@@ -64,65 +64,96 @@ program
     process.on("SIGINT", () => { server.stop(); process.exit(0); });
   });
 
-program
-  .command("discover")
-  .description("Full auto-discovery: scan repo, extract APIs/models/events, build graph")
-  .option("--llm", "Enable LLM flow discovery after AST scan (generates sequence diagrams)")
-  .action(async (options: { llm?: boolean }) => {
-    const rootPath = process.cwd();
-    const dbPath = join(rootPath, ".codebase-wiki/rag_db");
-    console.log("\n🔍 Full discovery scan...\n");
-    const result = await discoverServices(rootPath, dbPath);
-    console.log(`\n✔ Graph built: ${result.nodes} nodes, ${result.edges} edges`);
-    console.log(`   ${result.services} services, ${result.apis} APIs, ${result.models} models, ${result.events} events`);
+  program
+    .command("discover")
+    .description("Full auto-discovery: scan repo, extract APIs/models/events, build graph")
+    .option("--llm", "Enable LLM deep discovery (3-phase per service: docs → flows → notes)")
+    .option("--reset", "Clear all existing data before discovery (docs, flows, notes)")
+    .action(async (options: { llm?: boolean; reset?: boolean }) => {
+      const rootPath = process.cwd();
+      const dbPath = join(rootPath, ".codebase-wiki/rag_db");
 
-    if (options.llm) {
-      console.log("\n🧠 LLM Flow Discovery...\n");
+      if (options.reset) {
+        console.log("\n🧹 Resetting all wiki data...");
+        const client = getClient(dbPath);
+        await client.connect();
+        await client.clearAll();
+        console.log("   ✔ Cleared: docs, flows, notes, graph\n");
+      }
+
+      console.log("\n🔍 Full discovery scan...\n");
+      const result = await discoverServices(rootPath, dbPath);
+      console.log(`\n✔ Graph built: ${result.nodes} nodes, ${result.edges} edges`);
+      console.log(`   ${result.services} services, ${result.apis} APIs, ${result.models} models, ${result.events} events`);
+
+      if (options.llm) {
+        console.log("\n🧠 LLM Deep Discovery (3-phase per service: docs → flows → notes)...\n");
+        const client = getClient(dbPath);
+        await client.connect();
+        const { nodes } = await client.loadGraph();
+        const services = nodes.filter(n => n.type === "Service");
+
+        for (const svc of services) {
+          const svcName = svc.data.name as string;
+          const svcPath = (svc.data.path as string) || svcName;
+          const language = (svc.data.language as string) || "unknown";
+
+          // Gather AST context
+          const svcApis = nodes.filter(n => n.type === "API" && (n.data.service as string) === svcName);
+          const svcModels = nodes.filter(n => n.type === "Model" && (n.data.service as string) === svcName);
+          const svcEvents = nodes.filter(n => n.type === "Event" && (n.data.service as string) === svcName);
+
+          // Read real source files (language-agnostic)
+          const fileContext = readServiceFiles(rootPath, svcPath, language);
+
+          const astContext = `APIs (${svcApis.length}):
+  ${svcApis.map(a => `- ${a.data.method} ${a.data.path} (${a.data.fileRef})`).join("\n").slice(0, 2000)}
+
+  Models (${svcModels.length}):
+  ${svcModels.map(m => `- ${m.data.name} (${m.data.fileRef})`).join("\n").slice(0, 1500)}
+
+  ${svcEvents.length > 0 ? `Events (${svcEvents.length}):\n${svcEvents.map(e => `- ${e.data.direction} ${e.data.name} (${e.data.fileRef})`).join("\n").slice(0, 1000)}` : ""}`;
+
+          const serviceInfo = `Service: ${svcName} | Language: ${language} | Path: ${svcPath}`;
+
+          try {
+            process.stdout.write(`   📝 ${svcName} `);
+
+            // Phase 1: Generate wiki doc
+            const docResult = await phaseGenerateDoc(svcName, svcPath, serviceInfo, fileContext, astContext);
+            process.stdout.write(`📖`);
+
+            // Phase 2: Generate flows (sequences + state machines)
+            const flowCount = await phaseGenerateFlows(svcName, svcPath, serviceInfo, fileContext, astContext);
+            process.stdout.write(`${flowCount > 3 ? '🔄🧬' : '🔄'}`);
+
+            // Phase 3: Generate notes
+            const noteCount = await phaseGenerateNotes(svcName, svcPath, serviceInfo, fileContext, astContext);
+            console.log(` doc:${docResult}K flows:${flowCount} (incl state machines) notes:${noteCount}`);
+          } catch (e) {
+            console.log(` ⚠ ${String(e).slice(0, 80)}`);
+          }
+        }
+        console.log(`\n✔ Deep discovery complete\n`);
+      } else {
+        console.log(`\n   (use --llm to enable deep LLM discovery: 3-phase per service)\n`);
+        console.log(`   (use --reset --llm to clear all data and regenerate)\n`);
+      }
+    });
+
+  program
+    .command("reset")
+    .description("Clear all wiki data (docs, flows, notes, graph)")
+    .action(async () => {
+      const rootPath = process.cwd();
+      const dbPath = join(rootPath, ".codebase-wiki/rag_db");
+      console.log("\n🧹 Resetting all wiki data...");
       const client = getClient(dbPath);
       await client.connect();
-      const { nodes } = await client.loadGraph();
-      const services = nodes.filter(n => n.type === "Service");
-
-      for (const svc of services) {
-        const svcName = svc.data.name as string;
-        console.log(`   📝 ${svcName}...`);
-
-        // Gather context: APIs + models for this service
-        const svcApis = nodes.filter(n => n.type === "API" && (n.data.service as string) === svcName);
-        const svcModels = nodes.filter(n => n.type === "Model" && (n.data.service as string) === svcName);
-        const svcEvents = nodes.filter(n => n.type === "Event" && (n.data.service as string) === svcName);
-
-        const context = `Service: ${svcName}
-APIs:
-${svcApis.map(a => `- ${a.data.method} ${a.data.path} (${a.data.fileRef})`).join("\n").slice(0, 2000)}
-
-Models:
-${svcModels.map(m => `- ${m.data.name} (${m.data.fileRef})`).join("\n").slice(0, 1500)}
-
-${svcEvents.length > 0 ? `Events:\n${svcEvents.map(e => `- ${e.data.direction} ${e.data.name} (${e.data.fileRef})`).join("\n").slice(0, 1000)}` : ""}
-
-Based on this structure, generate ALL major flows for this service.
-For each flow, produce:
-1. Name + type (happy_path, error_path, edge_case, recovery)
-2. Brief summary
-3. 3-7 comma-separated keywords
-4. Comma-separated linked services
-5. A Mermaid sequence diagram showing the flow with ALL steps`;
-
-        try {
-          const flowNames = await discoverFlowsWithLLM(svcName, context, dbPath, svc.data.path as string);
-          console.log(`      ${flowNames} flows indexed`);
-        } catch (e) {
-          console.log(`      ⚠ ${String(e).slice(0, 80)}`);
-        }
-      }
-      console.log(`\n✔ Flow discovery complete\n`);
-    } else {
-      console.log(`\n   (use --llm to enable automatic flow discovery)\n`);
-    }
-  });
-
-program
+      await client.clearAll();
+      console.log("   ✔ Cleared: docs, flows, notes, graph");
+      console.log("   Run 'codebase-wiki discover --llm' to regenerate.\n");
+    });program
   .command("watch")
   .description("Watch for file changes and auto-update the knowledge base")
   .option("-d, --debounce <ms>", "Debounce in ms", "10000")
@@ -255,6 +286,135 @@ program
     console.log("   3. Generate docs:     /wiki generate <service-path>\n");
   });
 
+function readServiceFiles(rootPath: string, svcPath: string, language: string): string {
+  const parts: string[] = [];
+  const fullPath = join(rootPath, svcPath);
+  if (!existsSync(fullPath)) return "";
+
+  const patterns = getLanguagePatterns(language);
+
+  // 1. Doc files (README, AGENTS, CONTRIBUTING)
+  for (const f of ["README.md", "AGENTS.md", "CONTRIBUTING.md", "ARCHITECTURE.md"]) {
+    const p = join(fullPath, f);
+    if (existsSync(p)) {
+      const content = readFileSync(p, "utf-8");
+      parts.push(`### ${f}\n${content.slice(0, 3000)}`);
+    }
+  }
+
+  // 2. Language-specific config files
+  for (const f of patterns.config) {
+    const p = join(fullPath, f);
+    if (existsSync(p)) {
+      const content = readFileSync(p, "utf-8");
+      parts.push(`### ${f}\n${content.slice(0, 2000)}`);
+    }
+  }
+
+  // 3. Env files
+  for (const f of [".env.example", ".env.local.example", ".env.template", ".env"]) {
+    const p = join(fullPath, f);
+    if (existsSync(p)) {
+      const content = readFileSync(p, "utf-8");
+      parts.push(`### ${f}\n${content.slice(0, 1500)}`);
+    }
+  }
+
+  // 4. CI/CD + deploy files
+  for (const f of ["Dockerfile", "docker-compose.yml", "docker-compose.yaml", "Chart.yaml", "Makefile", ".github/workflows"]) {
+    const p = join(fullPath, f);
+    if (existsSync(p)) {
+      if (statSync(p).isDirectory()) {
+        parts.push(`### ${f}/ (CI/CD directory present)`);
+      } else {
+        const content = readFileSync(p, "utf-8");
+        parts.push(`### ${f}\n${content.slice(0, 1500)}`);
+      }
+    }
+  }
+
+  // 5. Generic config files (not already covered by language patterns)
+  const genericConfigs = ["tsconfig.json", "eslint.config.mjs", ".eslintrc.js", ".eslintrc.json", ".prettierrc", "next.config.js", "next.config.mjs", "next.config.ts", "vite.config.ts", "vitest.config.ts"];
+  for (const f of genericConfigs) {
+    if (patterns.config.includes(f)) continue; // already covered
+    const p = join(fullPath, f);
+    if (existsSync(p)) {
+      const content = readFileSync(p, "utf-8");
+      parts.push(`### ${f}\n${content.slice(0, 1000)}`);
+    }
+  }
+
+  // 6. Entry point based on language
+  for (const f of patterns.entry) {
+    const p = join(fullPath, f);
+    if (existsSync(p)) {
+      const content = readFileSync(p, "utf-8");
+      parts.push(`### ${f}\n${content.slice(0, 2000)}`);
+      break;
+    }
+  }
+
+  return parts.join("\n\n");
+}
+
+function getLanguagePatterns(language: string): { config: string[]; entry: string[] } {
+  const LANG_PATTERNS: Record<string, { config: string[]; entry: string[] }> = {
+    go: {
+      config: ["go.mod"],
+      entry: ["cmd/server/main.go", "cmd/main.go", "main.go"],
+    },
+    typescript: {
+      config: ["package.json", "tsconfig.json"],
+      entry: ["src/index.ts", "src/app/layout.tsx", "src/app/page.tsx", "src/main.ts", "src/server.ts"],
+    },
+    javascript: {
+      config: ["package.json"],
+      entry: ["src/index.js", "src/app/layout.jsx", "src/server.js"],
+    },
+    python: {
+      config: ["pyproject.toml", "setup.py", "setup.cfg", "requirements.txt", "uv.lock", "Pipfile"],
+      entry: ["main.py", "src/main.py", "app.py", "src/app.py", "__main__.py"],
+    },
+    rust: {
+      config: ["Cargo.toml"],
+      entry: ["src/main.rs", "src/bin/main.rs"],
+    },
+    kotlin: {
+      config: ["build.gradle.kts", "build.gradle", "settings.gradle.kts"],
+      entry: [],
+    },
+    java: {
+      config: ["pom.xml", "build.gradle.kts", "build.gradle"],
+      entry: [],
+    },
+    csharp: {
+      config: [],
+      entry: ["Program.cs", "Startup.cs"],
+    },
+    ruby: {
+      config: ["Gemfile"],
+      entry: [],
+    },
+    php: {
+      config: ["composer.json"],
+      entry: ["public/index.php", "index.php"],
+    },
+    elixir: {
+      config: ["mix.exs"],
+      entry: ["lib/**/application.ex"],
+    },
+    swift: {
+      config: ["Package.swift"],
+      entry: ["Sources/**/main.swift"],
+    },
+  };
+
+  return LANG_PATTERNS[language] || {
+    config: ["package.json", "go.mod", "Cargo.toml", "pyproject.toml", "build.gradle.kts", "build.gradle", "pom.xml", "composer.json", "Gemfile", "Makefile", "mix.exs", "Package.swift"],
+    entry: ["main.go", "main.py", "main.rs", "src/index.ts", "src/index.js", "src/index.tsx", "src/main.ts", "src/server.ts", "src/app.ts", "app.py", "server.js", "Program.cs"],
+  };
+}
+
 function copyDir(src: string, dest: string): void {
   for (const entry of readdirSync(src)) {
     const srcPath = join(src, entry);
@@ -268,50 +428,200 @@ function copyDir(src: string, dest: string): void {
   }
 }
 
-async function discoverFlowsWithLLM(svcName: string, context: string, dbPath: string, svcPath: string): Promise<number> {
-  const url = "http://192.168.100.207:8080/v1/chat/completions";
+async function callLLM(systemPrompt: string, userContent: string): Promise<string> {
+  const url = process.env.WIKI_LLM_URL || "http://192.168.100.207:8080/v1/chat/completions";
+  const model = process.env.WIKI_LLM_MODEL || "Qwen_Qwen3.6-35B-A3B-Q4_K_M.gguf";
+  const apiKey = process.env.WIKI_LLM_API_KEY || "sk-no-key-required";
+  const maxTokens = parseInt(process.env.WIKI_LLM_MAX_TOKENS || "4096", 10);
+  const timeoutMs = parseInt(process.env.WIKI_LLM_TIMEOUT_MS || "120000", 10);
+
   const body = JSON.stringify({
-    model: "Qwen_Qwen3.6-35B-A3B-Q4_K_M.gguf",
+    model,
     messages: [
-      { role: "system", content: `You are a Principal Software Architect analyzing a service to discover its workflows.
-For each flow, output a JSON object (one per line, no wrapping array):
-{"name":"Flow Name","type":"happy_path|error_path|edge_case|recovery","summary":"one line","keywords":"kw1,kw2,kw3","linked":"svc1,svc2","content":"## Flow Name\\n\\nSummary\\n\\n\`\`\`mermaid\\nsequenceDiagram\\n...\\n\`\`\`"}
-Output ONLY valid JSON lines. No markdown, no explanations.` },
-      { role: "user", content: context },
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userContent },
     ],
-    temperature: 0.2, max_tokens: 4096,
+    temperature: 0.2, max_tokens: maxTokens,
   });
 
   const resp = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: "Bearer sk-no-key-required" },
-    body, signal: AbortSignal.timeout(120000),
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body, signal: AbortSignal.timeout(timeoutMs),
   });
 
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  if (!resp.ok) throw new Error(`LLM HTTP ${resp.status}`);
   const data = await resp.json() as { choices?: { message?: { content?: string } }[] };
-  const text = data.choices?.[0]?.message?.content || "";
+  return data.choices?.[0]?.message?.content || "";
+}
 
-  const client = getClient(dbPath);
+// Phase 1: Generate full wiki documentation
+async function phaseGenerateDoc(
+  svcName: string, svcPath: string, serviceInfo: string, fileContext: string, astContext: string,
+): Promise<number> {
+  const prompt = `You are a Principal Software Architect. Analyze the service below and produce a comprehensive architectural wiki document.
+
+  Required sections (use ## headings):
+  - Overview (what it is, problem solved, tech stack)
+  - Architecture (system context as ASCII diagram or text, design patterns, auth flow)
+  - API Endpoints (complete table: Method | Path | Purpose)
+  - Data Model (key types, entities, database schema)
+  - Configuration (env vars grouped by category: public, server-only, secrets)
+  - Dependencies (external services called + internal services that call this one)
+  - Deployment (how deployed, container/base image, manifests location, CI/CD)
+  - Testing (framework, test command, file patterns)
+  - Gotchas (non-obvious behaviors, quirks, edge cases, conventions to follow when modifying)
+
+  Rules:
+  - Be specific with file paths (e.g. \`src/lib/oms/client.ts:45\`)
+  - Use the source files and AST data provided — do NOT invent details
+  - Target 4K+ chars of content
+  - Output ONLY valid Markdown (no JSON wrapper, no explanations before/after)`;
+
+  const context = `${serviceInfo}\n\n## Source Files\n${fileContext.slice(0, 12000)}\n\n## AST Analysis\n${astContext}`;
+  const content = await callLLM(prompt, context);
+  if (!content || content.length < 200) return 0;
+
+  const client = getClient(join(process.cwd(), ".codebase-wiki/rag_db"));
+  await client.connect();
+  await client.indexDoc({
+    id: svcName, serviceName: svcName, servicePath: svcPath,
+    language: "unknown", sections: {}, content, indexedAt: Date.now(),
+  });
+  return Math.floor(content.length / 1000);
+}
+
+// Phase 2: Generate complete flows with file references + state machines
+async function phaseGenerateFlows(
+  svcName: string, svcPath: string, serviceInfo: string, fileContext: string, astContext: string,
+): Promise<number> {
+  const client = getClient(join(process.cwd(), ".codebase-wiki/rag_db"));
+  await client.connect();
+
+  // Round 1: Sequence flows (happy path, error path, edge case)
+  const seqPrompt = `You are a Principal Software Architect. Generate COMPLETE sequence flows for this service — each must show the FULL lifecycle, not a truncated snippet.
+
+  For each flow, output a JSON object on its own line:
+  {"name":"Flow Name","flow_type":"happy_path|error_path|edge_case|recovery","summary":"one line","keywords":"kw1,kw2,kw3","linked":"svc1,svc2","file_refs":"src/handler/checkout.go:45,src/service/order.go:120","content":"## Flow Name\\n\\n### Referenced Files\\n- src/handler/checkout.go:45 — validation\\n- src/service/order.go:120 — order creation\\n\\n### Summary\\n...\\n\\n\`\`\`mermaid\\nsequenceDiagram\\n  actor User\\n  participant SVC as ${svcName}\\n  ...\\n\`\`\`"}
+
+  REQUIREMENTS:
+  - Generate 3 sequence flows: 1 happy path + 1 error path + 1 edge case or recovery
+  - MINIMUM 8 interactions per Mermaid diagram (not just 3-4 steps)
+  - "file_refs" MUST contain comma-separated file paths with line numbers, taken from the AST data or source files provided
+  - Include accurate file references — use the file paths from the AST (e.g. "handler/checkout.go:45")  
+  - linked services MUST use actual service names from the source code, not invented names
+  - Output ONLY JSON lines (one per flow, no markdown fences, no explanations)`;
+
+  const seqContext = `${serviceInfo}\n\n## AST Data (use file paths from here for file_refs)\n${astContext}\n\n## Source Files\n${fileContext.slice(0, 4000)}`;
+  const seqText = await callLLM(seqPrompt, seqContext);
+
+  let count = 0;
+  if (seqText) {
+    for (const line of seqText.split("\n")) {
+      try {
+        const obj = JSON.parse(line.trim());
+        if (!obj.name || !obj.content) continue;
+        await client.addFlow({
+          id: `${svcName}_${obj.name}`, serviceName: svcName, servicePath: svcPath,
+          flowName: obj.name, summary: obj.summary || "",
+          keywords: (obj.keywords || "").split(",").map((k: string) => k.trim()).filter(Boolean),
+          linkedServices: (obj.linked || "").split(",").map((s: string) => s.trim()).filter(Boolean),
+          flowType: obj.flow_type || "happy_path",
+          content: obj.content,
+          fileRefs: (obj.file_refs || "").split(",").map((f: string) => f.trim()).filter(Boolean),
+          indexedAt: Date.now(),
+        });
+        count++;
+      } catch { /* skip invalid lines */ }
+    }
+  }
+
+  // Round 2: State machines (order lifecycle, payment states, etc.)
+  const statePrompt = `You are a Principal Software Architect. Identify ALL state machines in this service — entity lifecycles, status transitions, workflow states.
+
+  For each state machine, output a JSON object on its own line:
+  {"name":"Order Lifecycle","flow_type":"state_machine","summary":"Complete state machine for order status transitions","keywords":"state,machine,order,lifecycle","linked":"","file_refs":"src/model/order.go:15,src/service/order.go:200","content":"## Order Lifecycle\\n\\n### Referenced Files\\n- src/model/order.go:15 — status constants\\n- src/service/order.go:200 — transition logic\\n\\n### Summary\\nOrder progresses through: PENDING → PAYMENT_PENDING → PAID → FULFILLMENT_INIT → COMPLETED\\n\\n\`\`\`mermaid\\nstateDiagram-v2\\n  [*] --> pending\\n  pending --> payment_pending: payment created\\n  payment_pending --> paid: payment confirmed\\n  payment_pending --> cancelled: timeout / user cancel\\n  paid --> fulfillment_init: fulfillment starts\\n  fulfillment_init --> completed: all items shipped\\n  completed --> [*]\\n  cancelled --> [*]\\n\`\`\`"}
+
+  CRITICAL — Mermaid v10.9 stateDiagram-v2 syntax rules (follow EXACTLY):
+  1. State names: lowercase letters, digits, and underscores ONLY (snake_case). Never use CamelCase, PascalCase, spaces, or hyphens.
+     - GOOD: pending, payment_pending, fulfilled, failed_retry
+     - BAD: PENDING, PaymentPending, "Crash Loop", PodInitializing
+  2. NO self-transitions (X --> X). If a state can loop, use a transition to [*] and back, or skip it.
+  3. NO nested state blocks (\`state Outer { ... }\`). Flatten everything.
+  4. NO note blocks (\`note right of\`, \`note left of\`). Put details in the Summary section instead.
+  5. Minimum 4 states. Maximum 12 states (avoid cluttered diagrams).
+  6. Every state except [*] must have at least one incoming AND one outgoing transition.
+  7. Transition labels after colon: keep under 40 chars, single line, no commas.
+  8. "file_refs" MUST contain the specific files + line numbers where states are defined.
+  9. Output ONLY JSON lines (one per state machine, no markdown fences, no explanations).`;
+
+  const stateContext = `${serviceInfo}\n\n## AST Data\n${astContext}\n\n## Source Files (look for status enums, state constants, transition logic)\n${fileContext.slice(0, 6000)}`;
+  const stateText = await callLLM(statePrompt, stateContext);
+
+  if (stateText) {
+    for (const line of stateText.split("\n")) {
+      try {
+        const obj = JSON.parse(line.trim());
+        if (!obj.name || !obj.content) continue;
+        await client.addFlow({
+          id: `${svcName}_${obj.name}`, serviceName: svcName, servicePath: svcPath,
+          flowName: obj.name, summary: obj.summary || "",
+          keywords: (obj.keywords || "").split(",").map((k: string) => k.trim()).filter(Boolean),
+          linkedServices: (obj.linked || "").split(",").map((s: string) => s.trim()).filter(Boolean),
+          flowType: "state_machine",
+          content: obj.content,
+          fileRefs: (obj.file_refs || "").split(",").map((f: string) => f.trim()).filter(Boolean),
+          indexedAt: Date.now(),
+        });
+        count++;
+      } catch { /* skip invalid lines */ }
+    }
+  }
+
+  return count;
+}
+
+// Phase 3: Generate notes (patterns, gotchas, conventions)
+async function phaseGenerateNotes(
+  svcName: string, svcPath: string, serviceInfo: string, fileContext: string, astContext: string,
+): Promise<number> {
+  const prompt = `You are a Principal Software Architect. After analyzing a service, identify concrete patterns, gotchas, and conventions.
+
+  For each discovery, output a JSON object on its own line:
+  {"note_type":"pattern|gotcha|convention|integration|decision|tip","topic":"Short descriptive title","content":"What was discovered, why it matters, how it's used","context":"specific/file/path.ts","tags":"tag1,tag2,tag3"}
+
+  REQUIREMENTS:
+  - Generate at least 4 notes: 1 pattern + 1 gotcha + 1 convention + 1 of any type
+  - "pattern" = a recurring design used in 2+ places in this service
+  - "gotcha" = an edge case, unexpected behavior, or limitation
+  - "convention" = a naming, structural, or code-style rule
+  - context MUST be a specific file path with optional line number (e.g. "src/handler/auth.go:42")
+  - tags must be 2-5 comma-separated lowercase keywords
+  - Output ONLY JSON lines (no markdown fences, no explanations)`;
+
+  const context = `${serviceInfo}\n\n## Source Files\n${fileContext.slice(0, 8000)}\n\n## AST Analysis\n${astContext}`;
+  const text = await callLLM(prompt, context);
+  if (!text) return 0;
+
+  const client = getClient(join(process.cwd(), ".codebase-wiki/rag_db"));
   await client.connect();
   let count = 0;
 
   for (const line of text.split("\n")) {
     try {
-      const flow = JSON.parse(line.trim());
-      if (!flow.name || !flow.content) continue;
-      const id = `${svcName}_${flow.name}`;
-      await client.addFlow({
-        id, serviceName: svcName, servicePath: svcPath,
-        flowName: flow.name, summary: flow.summary || "",
-        keywords: (flow.keywords || "").split(",").map((k: string) => k.trim()).filter(Boolean),
-        linkedServices: (flow.linked || "").split(",").map((s: string) => s.trim()).filter(Boolean),
-        flowType: flow.type || "happy_path", content: flow.content, indexedAt: Date.now(),
+      const obj = JSON.parse(line.trim());
+      if (!obj.topic || !obj.content) continue;
+      await client.addNote({
+        id: `${svcName}_${obj.topic}_${Date.now()}`,
+        type: obj.note_type || "tip",
+        topic: obj.topic, content: obj.content,
+        context: obj.context || "",
+        tags: (obj.tags || "").split(",").map((t: string) => t.trim()),
+        authoredBy: "llm-discover", authoredAt: Date.now(),
       });
       count++;
-    } catch { /* skip invalid JSON lines */ }
+    } catch { /* skip invalid lines */ }
   }
-
   return count;
 }
 

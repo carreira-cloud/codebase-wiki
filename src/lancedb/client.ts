@@ -91,6 +91,14 @@ export class LanceDBClient {
     return deleted;
   }
 
+  async clearAll(): Promise<void> {
+    for (const table of ["docs", "flows", "notes", "nodes", "edges"]) {
+      await this.withLock(table, async () => {
+        writeFileSync(this.tablePath(table), "[]", "utf-8");
+      });
+    }
+  }
+
   async addFlow(flow: WikiFlow): Promise<void> {
     return this.withLock("flows", async () => {
       const table = this.tablePath("flows");
@@ -105,6 +113,7 @@ export class LanceDBClient {
         linked_services: JSON.stringify(flow.linkedServices),
         flow_type: flow.flowType,
         content: flow.content,
+        file_refs: JSON.stringify(flow.fileRefs),
         indexed_at: flow.indexedAt,
       });
       writeFileSync(table, JSON.stringify(flows), "utf-8");
@@ -132,6 +141,7 @@ export class LanceDBClient {
       linkedServices: JSON.parse((r.linked_services as string) || "[]"),
       flowType: (r.flow_type as WikiFlow["flowType"]) || "happy_path",
       content: r.content as string,
+      fileRefs: JSON.parse((r.file_refs as string) || "[]"),
       indexedAt: r.indexed_at as number,
     }));
   }
@@ -151,6 +161,7 @@ export class LanceDBClient {
       linkedServices: JSON.parse((r.linked_services as string) || "[]"),
       flowType: (r.flow_type as WikiFlow["flowType"]) || "happy_path",
       content: r.content as string,
+      fileRefs: JSON.parse((r.file_refs as string) || "[]"),
       indexedAt: r.indexed_at as number,
     }));
   }

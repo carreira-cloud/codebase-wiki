@@ -283,11 +283,12 @@ async function loadService(name) {
   html += (typeof DOMPurify !== 'undefined' ? DOMPurify.sanitize(raw) : esc(raw)) + '</div>';
   p.innerHTML = html;
   // Fix mermaid blocks: marked wraps them in <code>, mermaid needs <pre class="mermaid">
+  // Use textContent (not innerHTML) to avoid HTML parser mangling mermaid syntax
   var blocks = p.querySelectorAll('code.language-mermaid');
   blocks.forEach(function(b) {
     var pre = b.parentElement;
     pre.className = 'mermaid';
-    pre.innerHTML = b.textContent;
+    pre.textContent = b.textContent;
   });
   if (typeof mermaid !== 'undefined') { try { mermaid.run({querySelector:'.mermaid'}); } catch(e) {} }
 }
@@ -318,17 +319,18 @@ async function loadFlows() {
     '</div>';
   }).join('');
   // Fix and render mermaid blocks in flows
+  // Use textContent (not innerHTML) to avoid HTML parser mangling mermaid syntax
   var blocks = p.querySelectorAll('code.language-mermaid');
   blocks.forEach(function(b) {
     var pre = b.parentElement;
     pre.className = 'mermaid';
-    pre.innerHTML = b.textContent;
+    pre.textContent = b.textContent;
   });
   if (typeof mermaid !== 'undefined') { try { mermaid.run({querySelector:'#flowsPanel .mermaid'}); } catch(e) {} }
 }
 
 function getFlowClass(type) {
-  var map = { happy_path:'integrat', error_path:'gotcha', recovery:'integrat', edge_case:'convent', full:'pattern' };
+  var map = { happy_path:'integrat', error_path:'gotcha', recovery:'integrat', edge_case:'convent', full:'pattern', state_machine:'pattern' };
   return 'type-' + (map[type] || 'gotcha');
 }
 
