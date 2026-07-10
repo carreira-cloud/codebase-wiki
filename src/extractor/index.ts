@@ -40,7 +40,7 @@ function findServices(rootPath: string): { path: string; name: string; language:
   const results: { path: string; name: string; language: string }[] = [];
 
   function scanDir(dir: string, depth = 0): void {
-    if (depth > 5) return;
+    if (depth > 6) return;
     let entries: string[];
     try { entries = readdirSync(dir); } catch { return; }
 
@@ -98,7 +98,7 @@ function scanRoutes(filePath: string, rootPath: string): { method: string; path:
     patterns.push([/(?:e|echo)\.(GET|POST|PUT|PATCH|DELETE)\s*\(\s*"([^"]+)"/g, 2, 1]);
   } else if (ext === ".kt") {
     // Spring WebFlux: @GetMapping("/path")
-    patterns.push([/@(?:Get|Post|Put|Patch|Delete)Mapping\s*\(\s*"([^"]+)"/g, 1, 0]);
+    patterns.push([/@(Get|Post|Put|Patch|Delete)Mapping\s*\(\s*"([^"]+)"/g, 2, 1]);
     // Ktor: get("/path") { }
     patterns.push([/(get|post|put|delete|patch)\s*\(\s*"([^"]+)"/gi, 2, 1]);
   } else if (ext === ".py") {
@@ -125,7 +125,7 @@ function scanRoutes(filePath: string, rootPath: string): { method: string; path:
     patterns.push([/(?:app|api)\.Map(Get|Post|Put|Patch|Delete)\s*\(\s*"([^"]+)"/gi, 2, 1]);
   } else if (ext === ".java") {
     // Spring Boot: @GetMapping("/path")
-    patterns.push([/@(?:Get|Post|Put|Patch|Delete|Request)Mapping\s*\(\s*"([^"]+)"/g, 1, 0]);
+    patterns.push([/@(Get|Post|Put|Patch|Delete|Request)Mapping\s*\(\s*"([^"]+)"/g, 2, 1]);
     // JAX-RS: @Path("/resource") + @GET
     patterns.push([/@Path\s*\(\s*"([^"]+)"/g, 1, 0]);
   }
@@ -134,12 +134,8 @@ function scanRoutes(filePath: string, rootPath: string): { method: string; path:
     re.lastIndex = 0;
     let match;
     while ((match = re.exec(content)) !== null) {
-      const method = methodIdx > 0 ? match[methodIdx].toLowerCase() : match[1].toLowerCase();
+      const method = methodIdx > 0 ? match[methodIdx].toLowerCase() : "any";
       let routePath = match[pathIdx];
-      if (methodIdx > 0 && pathIdx > methodIdx) {
-        // Recalculate which group captured the path
-        routePath = method === match[1].toLowerCase() ? match[pathIdx] : match[1];
-      }
       if (!routePath || routePath.includes("//")) continue;
       const lineNum = content.substring(0, match.index).split("\n").length;
       routes.push({
@@ -186,7 +182,7 @@ export async function discoverServices(rootPath: string, dbPath: string) {
     } else {
       const apiRoutes: { method: string; path: string; handler: string; fileRef: string; auth: string }[] = [];
       const scanDir = (dir: string, depth: number): void => {
-        if (depth > 4) return;
+        if (depth > 8) return;
         let entries: string[];
         try { entries = readdirSync(dir); } catch { return; }
         for (const e of entries) {
