@@ -276,11 +276,27 @@ export async function discoverServices(rootPath: string, dbPath: string) {
 
     console.log(`   ${svcName}: ${analysis.apis.length} APIs (${language})`);
 
-    const docContent = `## Overview\n${svcName} — ${analysis.language} service with ${analysis.apis.length} API endpoints.\n\n## APIs\n${analysis.apis.slice(0, 15).map(a => `- ${a.method} ${a.path} \`${a.fileRef}\``).join("\n")}\n${analysis.models.length > 0 ? `\n## Models\n${analysis.models.slice(0, 15).map(m => `- ${m.name} (\`${m.fileRef}\`)`).join("\n")}\n` : ""}${analysis.events.length > 0 ? `\n## Events\n${analysis.events.slice(0, 10).map(e => `- ${e.direction} ${e.name} (\`${e.fileRef}\`)`).join("\n")}\n` : ""}`;
-    await client.indexDoc({
-      id: svcName, serviceName: svcName, servicePath: svcRelPath, language: analysis.language,
-      sections: {}, content: docContent, indexedAt: Date.now(),
-    });
+    // Check if a richer doc exists — never overwrite LLM-generated docs with static stubs
+    const existing = await client.getDoc(svcName);
+    if (existing && existing.provenance?.generator === "llm" && existing.content.length > 500) {
+      await client.indexDoc({
+        ...existing,
+        provenance: { ...existing.provenance, lastSeenAt: Date.now(), status: existing.provenance.status === "stale" ? "stale" : "current" },
+        indexedAt: Date.now(),
+      });
+    } else {
+      const docContent = `## Overview\n${svcName} — ${analysis.language} service with ${analysis.apis.length} API endpoints.\n\n## APIs\n${analysis.apis.slice(0, 15).map(a => `- ${a.method} ${a.path} \`${a.fileRef}\``).join("\n")}\n`;
+      await client.indexDoc({
+        id: svcName, serviceName: svcName, servicePath: svcRelPath, language: analysis.language,
+        sections: {}, content: docContent,
+        provenance: {
+          sourceCommit: "", sourceHash: "", generatedAt: Date.now(), lastSeenAt: Date.now(),
+          generator: "static", confidence: 0.9, evidence: analysis.apis.slice(0, 5).map(a => a.fileRef),
+          status: "current",
+        },
+        indexedAt: Date.now(),
+      });
+    }
   }
 
   await client.saveGraph(allNodes, allEdges);

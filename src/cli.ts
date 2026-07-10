@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
 import { handleMCPRequest } from "./mcp-server";
 import { getClient } from "./lancedb/client";
-import type { WikiFlow } from "./types";
+import type { WikiFlow, WikiProvenance } from "./types";
 import { startUIServer } from "./ui-server";
 import { discoverServices } from "./extractor/index";
 
@@ -209,6 +209,7 @@ ${members.map(f => {
             eventsEmitted: allEvents.emitted,
             eventsConsumed: allEvents.consumed,
             sagaId,
+            provenance: llmProvenance("saga"),
             indexedAt: Date.now(),
           });
           console.log(`   📐 ${sagaId}: ${members.length} flows across ${services.length} services`);
@@ -391,12 +392,12 @@ function readServiceFiles(rootPath: string, svcPath: string, language: string): 
     }
   }
 
-  // 3. Env files
-  for (const f of [".env.example", ".env.local.example", ".env.template", ".env"]) {
+  // 3. Env files — only examples, never real .env or secrets
+  for (const f of [".env.example", ".env.local.example", ".env.template"]) {
     const p = join(fullPath, f);
     if (existsSync(p)) {
       const content = readFileSync(p, "utf-8");
-      parts.push(`### ${f}\n${content.slice(0, 1500)}`);
+      parts.push(`### ${f}\n${redactSecrets(content).slice(0, 1500)}`);
     }
   }
 
@@ -499,19 +500,42 @@ function copyDir(src: string, dest: string): void {
   cpSync(src, dest, { recursive: true });
 }
 
-async function callLLM(systemPrompt: string, userContent: string): Promise<{ text: string; tokensIn: number; tokensOut: number }> {
+function redactSecrets(content: string): string {
+  return content
+    .replace(/([A-Z_]+)\s*=\s*["']?[A-Za-z0-9+/=]{20,}["']?/g, (_, key) => `${key}=***REDACTED***`)
+    .replace(/(api_key|secret|token|password|passwd|credential)\s*[=:]\s*["']?[^\s"',}\]\)]+["']?/gi, "$1=***REDACTED***");
+}
+
+function llmProvenance(phase = ""): WikiProvenance {
+  return {
+    sourceCommit: "", sourceHash: "",
+    generatedAt: Date.now(), lastSeenAt: Date.now(),
+    generator: "llm",
+    model: process.env.WIKI_LLM_MODEL || "local",
+    provider: (() => { try { return new URL(process.env.WIKI_LLM_URL || "http://localhost").hostname; } catch { return "local"; } })(),
+    promptVersion: `phase-${phase}-v1`,
+    runId: process.env.WIKI_RUN_ID || `run-${Date.now()}`,
+    confidence: 0.7, evidence: [], status: "current",
+  };
+}
+
+async function callLLM(systemPrompt: string, userContent: string, phase = ""): Promise<{ text: string; tokensIn: number; tokensOut: number }> {
   const url = process.env.WIKI_LLM_URL || "http://192.168.100.207:8080/v1/chat/completions";
   const model = process.env.WIKI_LLM_MODEL || "Qwen_Qwen3.6-35B-A3B-Q4_K_M.gguf";
+  const provider = new URL(url).hostname;
   const apiKey = process.env.WIKI_LLM_API_KEY || "sk-no-key-required";
   const maxTokens = parseInt(process.env.WIKI_LLM_MAX_TOKENS || "4096", 10);
   const timeoutMs = parseInt(process.env.WIKI_LLM_TIMEOUT_MS || "120000", 10);
   const sessionId = process.env.WIKI_SESSION_ID || `cli-${Date.now()}`;
+  const shouldRedact = process.env.WIKI_REDACT_SECRETS !== "false";
+
+  const safeContent = shouldRedact ? redactSecrets(userContent) : userContent;
 
   const body = JSON.stringify({
     model,
     messages: [
       { role: "system", content: systemPrompt },
-      { role: "user", content: userContent },
+      { role: "user", content: safeContent },
     ],
     temperature: 0.2, max_tokens: maxTokens,
   });
@@ -529,7 +553,6 @@ async function callLLM(systemPrompt: string, userContent: string): Promise<{ tex
   const tokensIn = data.usage?.prompt_tokens || (systemPrompt.length + userContent.length) / 4;
   const tokensOut = data.usage?.completion_tokens || text.length / 4;
 
-  // Record metric
   try {
     const client = getClient(join(process.cwd(), ".codebase-wiki/rag_db"));
     await client.connect();
@@ -537,9 +560,11 @@ async function callLLM(systemPrompt: string, userContent: string): Promise<{ tex
       id: `llm-${Date.now()}`,
       sessionId,
       source: "cli",
-      tool: "discover--llm",
+      tool: `discover--llm${phase ? '-' + phase : ''}`,
+      model, provider,
       tokensIn: Math.round(tokensIn),
       tokensOut: Math.round(tokensOut),
+      cacheHit: false,
       durationMs: Date.now() - start,
       timestamp: Date.now(),
     });
@@ -572,14 +597,23 @@ async function phaseGenerateDoc(
   - Output ONLY valid Markdown (no JSON wrapper, no explanations before/after)`;
 
   const context = `${serviceInfo}\n\n## Source Files\n${fileContext.slice(0, 12000)}\n\n## AST Analysis\n${astContext}`;
-  const { text: content } = await callLLM(prompt, context);
+  const { text: content } = await callLLM(prompt, context, "doc");
   if (!content || content.length < 200) return 0;
 
   const client = getClient(join(process.cwd(), ".codebase-wiki/rag_db"));
   await client.connect();
+  const runId = `run-${Date.now()}`;
+  const model = process.env.WIKI_LLM_MODEL || "local";
+  const provider = new URL(process.env.WIKI_LLM_URL || "http://localhost").hostname;
   await client.indexDoc({
     id: svcName, serviceName: svcName, servicePath: svcPath,
-    language: "unknown", sections: {}, content, indexedAt: Date.now(),
+    language: "unknown", sections: {}, content,
+    provenance: {
+      sourceCommit: "", sourceHash: "", generatedAt: Date.now(), lastSeenAt: Date.now(),
+      generator: "llm", model, provider, promptVersion: "phase1-doc-v1", runId,
+      confidence: 0.7, evidence: [], status: "current",
+    },
+    indexedAt: Date.now(),
   });
   return Math.floor(content.length / 1000);
 }
@@ -629,6 +663,7 @@ async function phaseGenerateFlows(
           eventsEmitted: (obj.events_emitted || "").split(",").map((e: string) => e.trim()).filter(Boolean),
           eventsConsumed: (obj.events_consumed || "").split(",").map((e: string) => e.trim()).filter(Boolean),
           sagaId: obj.saga_id || "",
+          provenance: llmProvenance("flows"),
           indexedAt: Date.now(),
         });
         count++;
@@ -675,6 +710,7 @@ async function phaseGenerateFlows(
           eventsEmitted: (obj.events_emitted || "").split(",").map((e: string) => e.trim()).filter(Boolean),
           eventsConsumed: [],
           sagaId: obj.saga_id || "",
+          provenance: llmProvenance("state-machine"),
           indexedAt: Date.now(),
         });
         count++;
@@ -721,7 +757,11 @@ async function phaseGenerateNotes(
         topic: obj.topic, content: obj.content,
         context: obj.context || "",
         tags: (obj.tags || "").split(",").map((t: string) => t.trim()),
-        authoredBy: "llm-discover", authoredAt: Date.now(),
+        authoredBy: "llm-discover",
+        evidence: [],
+        confidence: 0.5,
+        status: "proposed",
+        authoredAt: Date.now(),
       });
       count++;
     } catch { /* skip invalid lines */ }

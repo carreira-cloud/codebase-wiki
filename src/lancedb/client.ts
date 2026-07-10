@@ -1,6 +1,16 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import type { WikiDoc, WikiNote, WikiFlow, MetricEntry, GraphNode, GraphEdge } from "../types";
+import type { WikiDoc, WikiNote, WikiFlow, WikiProvenance, MetricEntry, GraphNode, GraphEdge } from "../types";
+
+function defaultProvenance(raw: string | undefined, timestamp: number): WikiProvenance {
+  if (raw) {
+    try { return JSON.parse(raw) as WikiProvenance; } catch { /* use default */ }
+  }
+  return {
+    sourceCommit: "", sourceHash: "", generatedAt: timestamp, lastSeenAt: timestamp,
+    generator: "human", confidence: 0.5, evidence: [], status: "current",
+  };
+}
 
 let dbInstances = new Map<string, LanceDBClient>();
 
@@ -29,6 +39,7 @@ export class LanceDBClient {
       language: doc.language,
       content: doc.content,
       sections: JSON.stringify(doc.sections),
+      provenance: JSON.stringify(doc.provenance),
       indexed_at: doc.indexedAt,
       vector: [],
     };
@@ -95,6 +106,7 @@ export class LanceDBClient {
         events_emitted: JSON.stringify(flow.eventsEmitted),
         events_consumed: JSON.stringify(flow.eventsConsumed),
         saga_id: flow.sagaId,
+        provenance: JSON.stringify(flow.provenance),
         indexed_at: flow.indexedAt,
       });
       writeFileSync(table, JSON.stringify(flows), "utf-8");
@@ -125,6 +137,7 @@ export class LanceDBClient {
       eventsEmitted: JSON.parse((r.events_emitted as string) || "[]"),
       eventsConsumed: JSON.parse((r.events_consumed as string) || "[]"),
       sagaId: (r.saga_id as string) || "",
+      provenance: defaultProvenance(r.provenance as string, r.indexed_at as number),
       indexedAt: r.indexed_at as number,
     }));
   }
@@ -148,6 +161,7 @@ export class LanceDBClient {
       eventsEmitted: JSON.parse((r.events_emitted as string) || "[]"),
       eventsConsumed: JSON.parse((r.events_consumed as string) || "[]"),
       sagaId: (r.saga_id as string) || "",
+      provenance: defaultProvenance(r.provenance as string, r.indexed_at as number),
       indexedAt: r.indexed_at as number,
     }));
   }
@@ -273,9 +287,13 @@ export class LanceDBClient {
       session_id: metric.sessionId,
       source: metric.source,
       tool: metric.tool,
+      model: metric.model || "",
+      provider: metric.provider || "",
       tokens_in: metric.tokensIn,
       tokens_out: metric.tokensOut,
+      cache_hit: metric.cacheHit,
       duration_ms: metric.durationMs,
+      error: metric.error || "",
       timestamp: metric.timestamp,
     });
     writeFileSync(table, JSON.stringify(rows), "utf-8");
@@ -302,6 +320,9 @@ export class LanceDBClient {
       context: note.context,
       tags: JSON.stringify(note.tags),
       authored_by: note.authoredBy,
+      evidence: JSON.stringify(note.evidence),
+      confidence: note.confidence,
+      status: note.status,
       authored_at: note.authoredAt,
     });
     writeFileSync(table, JSON.stringify(notes), "utf-8");
@@ -324,6 +345,9 @@ export class LanceDBClient {
       context: r.context as string,
       tags: JSON.parse((r.tags as string) || "[]"),
       authoredBy: r.authored_by as string,
+      evidence: JSON.parse((r.evidence as string) || "[]"),
+      confidence: (r.confidence as number) || 0.5,
+      status: (r.status as WikiNote["status"]) || "current",
       authoredAt: r.authored_at as number,
     }));
   }
@@ -339,6 +363,9 @@ export class LanceDBClient {
       context: r.context as string,
       tags: JSON.parse((r.tags as string) || "[]"),
       authoredBy: r.authored_by as string,
+      evidence: JSON.parse((r.evidence as string) || "[]"),
+      confidence: (r.confidence as number) || 0.5,
+      status: (r.status as WikiNote["status"]) || "current",
       authoredAt: r.authored_at as number,
     }));
   }
@@ -356,9 +383,9 @@ export class LanceDBClient {
 
   private rowToDoc(r: Record<string, unknown>): WikiDoc {
     let sections: Record<string, string> = {};
-    try {
-      sections = JSON.parse(r.sections as string);
-    } catch { /* ignore */ }
+    let provenance: Record<string, unknown> = {};
+    try { sections = JSON.parse(r.sections as string); } catch { /* ignore */ }
+    try { provenance = JSON.parse(r.provenance as string); } catch { /* ignore */ }
 
     return {
       id: r.id as string,
@@ -367,6 +394,20 @@ export class LanceDBClient {
       language: r.language as string,
       sections,
       content: r.content as string,
+      provenance: {
+        sourceCommit: (provenance.sourceCommit as string) || "",
+        sourceHash: (provenance.sourceHash as string) || "",
+        generatedAt: (provenance.generatedAt as number) || (r.indexed_at as number) || 0,
+        lastSeenAt: (provenance.lastSeenAt as number) || (r.indexed_at as number) || 0,
+        generator: (provenance.generator as "static" | "llm" | "human") || "static",
+        model: provenance.model as string,
+        provider: provenance.provider as string,
+        promptVersion: provenance.promptVersion as string,
+        runId: provenance.runId as string,
+        confidence: (provenance.confidence as number) || 0.5,
+        evidence: (provenance.evidence as string[]) || [],
+        status: (provenance.status as "current" | "stale" | "proposed" | "approved" | "rejected" | "superseded") || "current",
+      },
       indexedAt: r.indexed_at as number,
     };
   }

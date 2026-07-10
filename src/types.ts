@@ -3,10 +3,29 @@ export interface MetricEntry {
   sessionId: string;
   source: "mcp" | "cli" | "ui";
   tool: string;
+  model?: string;
+  provider?: string;
   tokensIn: number;
   tokensOut: number;
+  cacheHit: boolean;
   durationMs: number;
+  error?: string;
   timestamp: number;
+}
+
+export interface WikiProvenance {
+  sourceCommit: string;
+  sourceHash: string;
+  generatedAt: number;
+  lastSeenAt: number;
+  generator: "static" | "llm" | "human";
+  model?: string;
+  provider?: string;
+  promptVersion?: string;
+  runId?: string;
+  confidence: number;
+  evidence: string[];
+  status: "current" | "stale" | "proposed" | "approved" | "rejected" | "superseded";
 }
 
 export interface WikiDoc {
@@ -16,6 +35,7 @@ export interface WikiDoc {
   language: string;
   sections: Record<string, string>;
   content: string;
+  provenance: WikiProvenance;
   indexedAt: number;
 }
 
@@ -33,6 +53,7 @@ export interface WikiFlow {
   eventsEmitted: string[];
   eventsConsumed: string[];
   sagaId: string;
+  provenance: WikiProvenance;
   indexedAt: number;
 }
 
@@ -74,6 +95,9 @@ export interface WikiNote {
   context: string;
   tags: string[];
   authoredBy: string;
+  evidence: string[];
+  confidence: number;
+  status: "current" | "stale" | "proposed" | "approved" | "rejected" | "superseded";
   authoredAt: number;
 }
 

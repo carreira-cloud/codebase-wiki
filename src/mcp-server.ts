@@ -16,6 +16,7 @@ function trackCall(tool: string, durationMs: number): void {
       tool,
       tokensIn: 0,
       tokensOut: 0,
+      cacheHit: false,
       durationMs,
       timestamp: Date.now(),
     })).catch(() => {});
@@ -297,6 +298,12 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<st
         language: (args.language as string) || "unknown",
         sections: (args.sections as Record<string, string>) || {},
         content: args.content as string,
+        provenance: {
+          sourceCommit: "", sourceHash: "",
+          generatedAt: Date.now(), lastSeenAt: Date.now(),
+          generator: "human",
+          confidence: 1.0, evidence: [], status: "current",
+        },
         indexedAt: Date.now(),
       };
       await client.indexDoc(doc);
@@ -334,7 +341,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<st
     }
 
     case "wiki_note": {
-      const id = `${args.topic}_${Date.now()}`;
+      const id = `note-${Date.now()}`;
       await client.addNote({
         id,
         type: (args.type as WikiNote["type"]) || "tip",
@@ -343,6 +350,9 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<st
         context: (args.context as string) || "",
         tags: typeof args.tags === "string" ? args.tags.split(",").map(t => t.trim()) : [],
         authoredBy: "agent",
+        evidence: [],
+        confidence: 0.8,
+        status: "proposed",
         authoredAt: Date.now(),
       });
       return `Note stored: [${args.type}] "${args.topic}"`;
@@ -382,6 +392,12 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<st
         eventsEmitted: typeof args.events_emitted === "string" ? args.events_emitted.split(",").map((e: string) => e.trim()) : [],
         eventsConsumed: typeof args.events_consumed === "string" ? args.events_consumed.split(",").map((e: string) => e.trim()) : [],
         sagaId: (args.saga_id as string) || "",
+        provenance: {
+          sourceCommit: "", sourceHash: "",
+          generatedAt: Date.now(), lastSeenAt: Date.now(),
+          generator: "human",
+          confidence: 1.0, evidence: [], status: "current",
+        },
         indexedAt: Date.now(),
       });
       return `Flow indexed: "${args.flow_name}" [${args.flow_type}]`;

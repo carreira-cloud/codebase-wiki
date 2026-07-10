@@ -80,6 +80,9 @@ export async function startUIServer(port: number, dbPath: string) {
           context: body.context || "",
           tags: body.tags || [],
           authoredBy: "human",
+          evidence: [],
+          confidence: 1.0,
+          status: "approved",
           authoredAt: Date.now(),
         });
         return json({ ok: true, id });
