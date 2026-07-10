@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { Command } from "commander";
-import { cpSync, existsSync, mkdirSync, statSync, watch, readFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, statSync, watch, readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
@@ -43,7 +43,23 @@ program
     const rootPath = process.cwd();
     const dbDir = join(rootPath, ".codebase-wiki");
     if (!existsSync(dbDir)) mkdirSync(dbDir, { recursive: true });
+
+    // Write default config if missing
+    const cfgPath = join(dbDir, "config.json");
+    if (!existsSync(cfgPath)) {
+      const defaultConfig = {
+        version: 1,
+        discovery: {
+          exclude: ["**/static-sites/**"],
+          maxDepth: 6,
+          maxFileSizeKb: 500,
+        },
+      };
+      writeFileSync(cfgPath, JSON.stringify(defaultConfig, null, 2), "utf-8");
+      console.log("✔ Default config written to .codebase-wiki/config.json");
+    }
     console.log("✔ Knowledge base initialized at .codebase-wiki/");
+    console.log("  Customize: edit .codebase-wiki/config.json → discovery.exclude");
     console.log("  Commands:");
     console.log("    codebase-wiki start-mcp     → Start MCP server for AI agents");
     console.log("    codebase-wiki serve          → Start web UI to explore content");

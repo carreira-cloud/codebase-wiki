@@ -1,8 +1,44 @@
 import { parseGoService, extractGoDeps } from "../parser/go-parser";
 import { getClient } from "../lancedb/client";
-import { readdirSync, statSync, readFileSync } from "node:fs";
+import { readdirSync, statSync, readFileSync, existsSync } from "node:fs";
 import { join, basename, extname } from "node:path";
 import type { GraphNode, GraphEdge, ServiceAnalysis } from "../types";
+
+interface DiscoverConfig {
+  exclude: string[];
+  max_depth: number;
+  maxFileSizeKb: number;
+}
+
+function loadConfig(rootPath: string): DiscoverConfig {
+  const cfgPath = join(rootPath, ".codebase-wiki", "config.json");
+  const defaults: DiscoverConfig = { exclude: [], max_depth: 6, maxFileSizeKb: 500 };
+  if (!existsSync(cfgPath)) return defaults;
+  try {
+    const raw = JSON.parse(readFileSync(cfgPath, "utf-8"));
+    return {
+      exclude: raw.discovery?.exclude || [],
+      max_depth: raw.discovery?.maxDepth ?? defaults.max_depth,
+      maxFileSizeKb: raw.discovery?.maxFileSizeKb ?? defaults.maxFileSizeKb,
+    };
+  } catch { return defaults; }
+}
+
+const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "build", ".next", "vendor", ".codebase-wiki", "coverage", "__pycache__", ".turbo", ".parcel-cache"]);
+
+function shouldSkip(entry: string, config: DiscoverConfig): boolean {
+  if (SKIP_DIRS.has(entry)) return true;
+  for (const pattern of config.exclude) {
+    let name = pattern
+      .replace(/^\*\*\//, "")    // strip **/
+      .replace(/\/\*\*$/, "")    // strip /**
+      .replace(/\/\*$/, "")      // strip /*
+      .replace(/\/$/, "")        // strip trailing /
+      .split("/").pop() || "";   // get last segment
+    if (entry === name) return true;
+  }
+  return false;
+}
 
 const MARKERS: Record<string, string> = {
   "go.mod": "go",
@@ -22,8 +58,6 @@ const MARKERS: Record<string, string> = {
   ".sln": "csharp",
 };
 
-const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "build", ".next", "vendor", ".codebase-wiki", "coverage", "__pycache__", ".turbo", ".parcel-cache"]);
-
 function detectLanguage(dir: string): string {
   for (const [marker, lang] of Object.entries(MARKERS)) {
     try {
@@ -36,16 +70,16 @@ function detectLanguage(dir: string): string {
   return "unknown";
 }
 
-function findServices(rootPath: string): { path: string; name: string; language: string }[] {
+function findServices(rootPath: string, config: DiscoverConfig): { path: string; name: string; language: string }[] {
   const results: { path: string; name: string; language: string }[] = [];
 
   function scanDir(dir: string, depth = 0): void {
-    if (depth > 6) return;
+    if (depth > config.max_depth) return;
     let entries: string[];
     try { entries = readdirSync(dir); } catch { return; }
 
     for (const e of entries) {
-      if (SKIP_DIRS.has(e)) continue;
+      if (shouldSkip(e, config)) continue;
       if (e.startsWith(".") && e !== ".github") continue;
 
       const full = join(dir, e);
@@ -155,10 +189,12 @@ export async function discoverServices(rootPath: string, dbPath: string) {
   const client = getClient(dbPath);
   await client.connect();
 
+  const config = loadConfig(rootPath);
+
   const allNodes: GraphNode[] = [];
   const allEdges: GraphEdge[] = [];
 
-  const services = findServices(rootPath);
+  const services = findServices(rootPath, config);
   const langCounts: Record<string, number> = {};
   for (const s of services) langCounts[s.language] = (langCounts[s.language] || 0) + 1;
   console.log(`   Found ${services.length} services: ${Object.entries(langCounts).map(([l, c]) => `${c} ${l}`).join(", ")}`);
@@ -186,12 +222,15 @@ export async function discoverServices(rootPath: string, dbPath: string) {
         let entries: string[];
         try { entries = readdirSync(dir); } catch { return; }
         for (const e of entries) {
-          if (SKIP_DIRS.has(e)) continue;
+          if (shouldSkip(e, config)) continue;
           const full = join(dir, e);
           try {
             const st = statSync(full);
             if (st.isDirectory()) { scanDir(full, depth + 1); continue; }
-            if (/\.(ts|tsx|js|jsx|go|kt|py|rs|rb|cs|java|php)$/i.test(e)) apiRoutes.push(...scanRoutes(full, rootPath));
+            if (/\.(ts|tsx|js|jsx|go|kt|py|rs|rb|cs|java|php)$/i.test(e)) {
+              if (st.size > config.maxFileSizeKb * 1024) continue;
+              apiRoutes.push(...scanRoutes(full, rootPath));
+            }
           } catch { /* skip */ }
         }
       };
