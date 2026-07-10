@@ -343,9 +343,10 @@ async function addNote() {
   }
 }
 
-function showPanel(name) {
-  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-  event.target.classList.add('active');
+function showPanel(name, evt) {
+  document.querySelectorAll('.tab').forEach((t, i) => {
+    t.classList.toggle('active', i === ['services','notes','addNote'].indexOf(name));
+  });
   document.getElementById('servicesPanel').style.display = name === 'services' ? 'block' : 'none';
   document.getElementById('notesPanel').style.display = name === 'notes' ? 'block' : 'none';
   document.getElementById('addNotePanel').style.display = name === 'addNote' ? 'block' : 'none';
