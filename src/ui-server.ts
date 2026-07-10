@@ -148,6 +148,12 @@ export async function startUIServer(port: number, dbPath: string) {
         return json({ apis: apiList.slice(offset, offset + limit), total: apiList.length });
       }
 
+      if (url.pathname === "/api/metrics") {
+        const metrics = await client.getMetrics();
+        const sessions = Object.entries(metrics.bySession).length;
+        return json({ sessions, calls: metrics.calls, tokensIn: metrics.tokensIn, tokensOut: metrics.tokensOut, byTool: metrics.byTool, bySession: metrics.bySession });
+      }
+
       return notFound();
     },
     error() {
@@ -281,6 +287,7 @@ header h1 { font-size: 20px; }
     <div class="tab" onclick="switchTab('events')">Events</div>
     <div class="tab" onclick="switchTab('apis')">APIs</div>
     <div class="tab" onclick="switchTab('notes')">Notes</div>
+    <div class="tab" onclick="switchTab('metrics')">Metrics</div>
     <div class="tab" onclick="switchTab('addNote')">+ Note</div>
   </div>
 
@@ -289,6 +296,7 @@ header h1 { font-size: 20px; }
   <div id="eventsPanel" style="display:none"></div>
   <div id="apisPanel" style="display:none"></div>
   <div id="notesPanel" style="display:none"></div>
+  <div id="metricsPanel" style="display:none"></div>
   <div id="addNotePanel" style="display:none">
     <div class="note-form">
       <select id="noteType"><option value="gotcha">Gotcha</option><option value="pattern">Pattern</option><option value="integration">Integration</option><option value="convention">Convention</option><option value="decision">Decision</option><option value="tip">Tip</option></select>
@@ -337,9 +345,9 @@ function onSvcFilter(v){
 
 function switchTab(name){
   state.tab=name; state.page=0;
-  var tabs=['services','flows','events','apis','notes','addNote'];
+  var tabs=['services','flows','events','apis','notes','metrics','addNote'];
   document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',tabs[i]===name));
-  ['servicesPanel','flowsPanel','eventsPanel','apisPanel','notesPanel','addNotePanel'].forEach(id=>document.getElementById(id).style.display='none');
+  ['servicesPanel','flowsPanel','eventsPanel','apisPanel','notesPanel','metricsPanel','addNotePanel'].forEach(id=>document.getElementById(id).style.display='none');
   document.getElementById(name+'Panel').style.display='block';
   document.getElementById('searchBar').style.display=name==='addNote'?'none':'flex';
   document.getElementById('searchResults').style.display='none';
@@ -348,6 +356,7 @@ function switchTab(name){
   if(name==='events') loadEvents();
   if(name==='apis') loadAPIs();
   if(name==='notes') loadNotes();
+  if(name==='metrics') loadMetrics();
 }
 
 function renderPagination(total,loadFn,extra){
@@ -507,7 +516,23 @@ async function loadAPIs(page){
   p.innerHTML+=renderPagination(data.total,'loadAPIs');
 }
 
-async function doSearch(page){
+async function loadMetrics(){
+  var m=await api('/api/metrics');
+  var p=document.getElementById('metricsPanel');
+  if(!m||!m.calls){p.innerHTML='<div class="empty">No metrics yet.</div>';return;}
+  var costPer1KIn=parseFloat(new URLSearchParams(location.search).get('costIn')||'0.003');
+  var costPer1KOut=parseFloat(new URLSearchParams(location.search).get('costOut')||'0.015');
+  var estCost=(m.tokensIn/1000)*costPer1KIn+(m.tokensOut/1000)*costPer1KOut;
+  var toolRows=Object.entries(m.byTool||{}).map(function(e){return'<tr><td>'+esc(e[0])+'</td><td>'+e[1]+'</td></tr>'}).join('');
+  var sessionRows=Object.entries(m.bySession||{}).slice(0,10).map(function(e){var s=e[1];return'<tr><td>'+esc(e[0])+'</td><td>'+s.calls+'</td><td>'+Math.round(s.tokensIn/1000)+'K</td><td>'+Math.round(s.tokensOut/1000)+'K</td></tr>'}).join('');
+  p.innerHTML='<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px">'+
+    '<div class="stat"><div class="value">'+m.sessions+'</div><div class="label">Sessions</div></div>'+
+    '<div class="stat"><div class="value">'+m.calls+'</div><div class="label">Tool Calls</div></div>'+
+    '<div class="stat"><div class="value">'+Math.round(m.tokensIn/1000)+'K</div><div class="label">Tokens In</div></div>'+
+    '<div class="stat"><div class="value">$'+estCost.toFixed(4)+'</div><div class="label">Est. Cost</div></div></div>'+
+    (toolRows?'<h4 style="margin-bottom:8px;color:var(--text2)">By Tool</h4><table style="width:100%;margin-bottom:20px;border-collapse:collapse"><tr style="border-bottom:1px solid var(--border)"><th style="text-align:left;padding:4px 8px">Tool</th><th style="text-align:right;padding:4px 8px">Calls</th></tr>'+toolRows+'</table>':'')+
+    (sessionRows?'<h4 style="margin-bottom:8px;color:var(--text2)">By Session (top 10)</h4><table style="width:100%;border-collapse:collapse"><tr style="border-bottom:1px solid var(--border)"><th style="text-align:left;padding:4px 8px">Session</th><th style="text-align:right;padding:4px 8px">Calls</th><th style="text-align:right;padding:4px 8px">In</th><th style="text-align:right;padding:4px 8px">Out</th></tr>'+sessionRows+'</table>':'');
+}
   if(typeof page==='number')state.page=page;
   var q=document.getElementById('searchInput').value.trim();
   if(!q)return;

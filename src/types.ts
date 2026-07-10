@@ -1,3 +1,14 @@
+export interface MetricEntry {
+  id: string;
+  sessionId: string;
+  source: "mcp" | "cli" | "ui";
+  tool: string;
+  tokensIn: number;
+  tokensOut: number;
+  durationMs: number;
+  timestamp: number;
+}
+
 export interface WikiDoc {
   id: string;
   serviceName: string;

@@ -483,12 +483,13 @@ function copyDir(src: string, dest: string): void {
   cpSync(src, dest, { recursive: true });
 }
 
-async function callLLM(systemPrompt: string, userContent: string): Promise<string> {
+async function callLLM(systemPrompt: string, userContent: string): Promise<{ text: string; tokensIn: number; tokensOut: number }> {
   const url = process.env.WIKI_LLM_URL || "http://192.168.100.207:8080/v1/chat/completions";
   const model = process.env.WIKI_LLM_MODEL || "Qwen_Qwen3.6-35B-A3B-Q4_K_M.gguf";
   const apiKey = process.env.WIKI_LLM_API_KEY || "sk-no-key-required";
   const maxTokens = parseInt(process.env.WIKI_LLM_MAX_TOKENS || "4096", 10);
   const timeoutMs = parseInt(process.env.WIKI_LLM_TIMEOUT_MS || "120000", 10);
+  const sessionId = process.env.WIKI_SESSION_ID || `cli-${Date.now()}`;
 
   const body = JSON.stringify({
     model,
@@ -499,6 +500,7 @@ async function callLLM(systemPrompt: string, userContent: string): Promise<strin
     temperature: 0.2, max_tokens: maxTokens,
   });
 
+  const start = Date.now();
   const resp = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
@@ -506,8 +508,28 @@ async function callLLM(systemPrompt: string, userContent: string): Promise<strin
   });
 
   if (!resp.ok) throw new Error(`LLM HTTP ${resp.status}`);
-  const data = await resp.json() as { choices?: { message?: { content?: string } }[] };
-  return data.choices?.[0]?.message?.content || "";
+  const data = await resp.json() as { choices?: { message?: { content?: string } }[]; usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number } };
+  const text = data.choices?.[0]?.message?.content || "";
+  const tokensIn = data.usage?.prompt_tokens || (systemPrompt.length + userContent.length) / 4;
+  const tokensOut = data.usage?.completion_tokens || text.length / 4;
+
+  // Record metric
+  try {
+    const client = getClient(join(process.cwd(), ".codebase-wiki/rag_db"));
+    await client.connect();
+    await client.addMetric({
+      id: `llm-${Date.now()}`,
+      sessionId,
+      source: "cli",
+      tool: "discover--llm",
+      tokensIn: Math.round(tokensIn),
+      tokensOut: Math.round(tokensOut),
+      durationMs: Date.now() - start,
+      timestamp: Date.now(),
+    });
+  } catch { /* fail-open */ }
+
+  return { text, tokensIn: Math.round(tokensIn), tokensOut: Math.round(tokensOut) };
 }
 
 // Phase 1: Generate full wiki documentation
@@ -534,7 +556,7 @@ async function phaseGenerateDoc(
   - Output ONLY valid Markdown (no JSON wrapper, no explanations before/after)`;
 
   const context = `${serviceInfo}\n\n## Source Files\n${fileContext.slice(0, 12000)}\n\n## AST Analysis\n${astContext}`;
-  const content = await callLLM(prompt, context);
+  const { text: content } = await callLLM(prompt, context);
   if (!content || content.length < 200) return 0;
 
   const client = getClient(join(process.cwd(), ".codebase-wiki/rag_db"));
@@ -572,7 +594,7 @@ async function phaseGenerateFlows(
   - Output ONLY JSON lines (one per flow, no markdown fences, no explanations)`;
 
   const seqContext = `${serviceInfo}\n\n## AST Data (use file paths+events from here)\n${astContext}\n\n## Source Files\n${fileContext.slice(0, 4000)}`;
-  const seqText = await callLLM(seqPrompt, seqContext);
+  const { text: seqText } = await callLLM(seqPrompt, seqContext);
 
   let count = 0;
   if (seqText) {
@@ -619,7 +641,7 @@ async function phaseGenerateFlows(
   10. Output ONLY JSON lines (one per state machine, no markdown fences, no explanations).`;
 
   const stateContext = `${serviceInfo}\n\n## AST Data\n${astContext}\n\n## Source Files (look for status enums, state constants, transition logic)\n${fileContext.slice(0, 6000)}`;
-  const stateText = await callLLM(statePrompt, stateContext);
+  const { text: stateText } = await callLLM(statePrompt, stateContext);
 
   if (stateText) {
     for (const line of stateText.split("\n")) {
@@ -666,7 +688,7 @@ async function phaseGenerateNotes(
   - Output ONLY JSON lines (no markdown fences, no explanations)`;
 
   const context = `${serviceInfo}\n\n## Source Files\n${fileContext.slice(0, 8000)}\n\n## AST Analysis\n${astContext}`;
-  const text = await callLLM(prompt, context);
+  const { text } = await callLLM(prompt, context);
   if (!text) return 0;
 
   const client = getClient(join(process.cwd(), ".codebase-wiki/rag_db"));

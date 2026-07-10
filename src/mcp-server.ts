@@ -3,6 +3,24 @@ import type { MCPRequest, MCPToolResponse, MCPListToolsResponse, WikiDoc, WikiNo
 import { getClient } from "./lancedb/client";
 
 const DEFAULT_DB_PATH = ".codebase-wiki/rag_db";
+const MCP_SESSION_ID = `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+
+function trackCall(tool: string, durationMs: number): void {
+  try {
+    const dbPath = (process.env.WIKI_DB_PATH) || join(process.cwd(), DEFAULT_DB_PATH);
+    const client = getClient(dbPath);
+    client.connect().then(() => client.addMetric({
+      id: `mcp-${Date.now()}`,
+      sessionId: MCP_SESSION_ID,
+      source: "mcp",
+      tool,
+      tokensIn: 0,
+      tokensOut: 0,
+      durationMs,
+      timestamp: Date.now(),
+    })).catch(() => {});
+  } catch { /* fail-open */ }
+}
 
 const TOOLS = [
   {
@@ -224,11 +242,13 @@ export async function handleMCPRequest(request: string): Promise<string> {
   }
 
   if (req.method === "tools/call") {
-    const toolName = req.params?.name;
+    const toolName = req.params?.name || "";
     const args = req.params?.arguments || {};
+    const start = Date.now();
 
     try {
-      const result = await callTool(toolName || "", args);
+      const result = await callTool(toolName, args);
+      trackCall(toolName, Date.now() - start);
       const resp: MCPToolResponse = {
         jsonrpc: "2.0",
         id: req.id,

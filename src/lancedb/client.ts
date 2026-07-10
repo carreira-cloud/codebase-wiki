@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import type { WikiDoc, WikiNote, WikiFlow, GraphNode, GraphEdge } from "../types";
+import type { WikiDoc, WikiNote, WikiFlow, MetricEntry, GraphNode, GraphEdge } from "../types";
 
 let dbInstances = new Map<string, LanceDBClient>();
 
@@ -238,6 +238,47 @@ export class LanceDBClient {
       downstream: bfs(serviceId, true, depth),
       upstream: bfs(serviceId, false, depth),
     };
+  }
+
+  async getMetrics(): Promise<{ sessions: number; calls: number; tokensIn: number; tokensOut: number; byTool: Record<string, number>; bySession: Record<string, { calls: number; tokensIn: number; tokensOut: number }> }> {
+    const rows = this.readTable("metrics");
+    const sessions = new Set<string>();
+    let totalTokensIn = 0, totalTokensOut = 0;
+    const byTool: Record<string, number> = {};
+    const bySession: Record<string, { calls: number; tokensIn: number; tokensOut: number }> = {};
+
+    for (const r of rows) {
+      const sid = r.session_id as string;
+      const tool = r.tool as string;
+      const ti = (r.tokens_in as number) || 0;
+      const to = (r.tokens_out as number) || 0;
+      sessions.add(sid);
+      totalTokensIn += ti;
+      totalTokensOut += to;
+      byTool[tool] = (byTool[tool] || 0) + 1;
+      if (!bySession[sid]) bySession[sid] = { calls: 0, tokensIn: 0, tokensOut: 0 };
+      bySession[sid].calls++;
+      bySession[sid].tokensIn += ti;
+      bySession[sid].tokensOut += to;
+    }
+
+    return { sessions: sessions.size, calls: rows.length, tokensIn: totalTokensIn, tokensOut: totalTokensOut, byTool, bySession };
+  }
+
+  async addMetric(metric: MetricEntry): Promise<void> {
+    const table = this.tablePath("metrics");
+    const rows = this.readTable("metrics");
+    rows.push({
+      id: metric.id,
+      session_id: metric.sessionId,
+      source: metric.source,
+      tool: metric.tool,
+      tokens_in: metric.tokensIn,
+      tokens_out: metric.tokensOut,
+      duration_ms: metric.durationMs,
+      timestamp: metric.timestamp,
+    });
+    writeFileSync(table, JSON.stringify(rows), "utf-8");
   }
 
   async stats(): Promise<{ services: number; totalChars: number; notes: number; flows: number }> {
