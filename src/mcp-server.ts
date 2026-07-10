@@ -113,6 +113,7 @@ const TOOLS = [
       type: "object",
       properties: {
         query: { type: "string", description: "Search across topic, content, tags, and context" },
+        status: { type: "string", description: "Filter by status. Defaults to exclude 'proposed'." },
       },
       required: ["query"],
     },
@@ -124,6 +125,7 @@ const TOOLS = [
       type: "object",
       properties: {
         type: { type: "string", description: "Filter by note type (pattern, gotcha, integration, convention, decision, tip)" },
+        status: { type: "string", description: "Filter by status (proposed, approved, current, rejected). Defaults to exclude 'proposed' for agents fetching knowledge." },
       },
     },
   },
@@ -360,22 +362,32 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<st
 
     case "wiki_notes_search": {
       const notes = await client.searchNotes(args.query as string);
-      return JSON.stringify(notes.map(n => ({
+      const statusFilter = (args.status as string) || "";
+      const filtered = statusFilter
+        ? notes.filter(n => n.status === statusFilter)
+        : notes.filter(n => n.status !== "proposed");
+      return JSON.stringify(filtered.map(n => ({
         type: n.type,
         topic: n.topic,
         snippet: n.content.slice(0, 200),
         context: n.context,
         tags: n.tags,
+        status: n.status,
       })), null, 2);
     }
 
     case "wiki_notes_list": {
       const notes = await client.listNotes((args.type as string) || undefined);
-      return JSON.stringify(notes.map(n => ({
+      const statusFilter = (args.status as string) || "";
+      const filtered = statusFilter
+        ? notes.filter(n => n.status === statusFilter)
+        : notes.filter(n => n.status !== "proposed");
+      return JSON.stringify(filtered.map(n => ({
         type: n.type,
         topic: n.topic,
         context: n.context,
         tags: n.tags,
+        status: n.status,
       })), null, 2);
     }
 

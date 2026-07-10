@@ -1,0 +1,161 @@
+{
+  "files": {
+    "/Users/bcarreira/Projects/Personal/carreira-cloud/codebase-wiki/CONTRIBUTING.md": {
+      "hash": "b5b827ef3ade895d829f550d318337641b515de0c98df2a7b5298c185558ad92",
+      "chunkCount": 1,
+      "indexedAt": 1783707453122,
+      "mtime": 1783639022583.79,
+      "size": 1186
+    },
+    "/Users/bcarreira/Projects/Personal/carreira-cloud/codebase-wiki/README.md": {
+      "hash": "78a5650102addd92292396c23fd8e8dfbf6f5e4316659cdf4f31892814ccd129",
+      "chunkCount": 1,
+      "indexedAt": 1783707453122,
+      "mtime": 1783649627319.2053,
+      "size": 4392
+    },
+    "/Users/bcarreira/Projects/Personal/carreira-cloud/codebase-wiki/commands/wiki.md": {
+      "hash": "85903ed5a3704c46d25178eec29cfa9b9319b2e982c2c950604a51adf3ba5f14",
+      "chunkCount": 5,
+      "indexedAt": 1783707453122,
+      "mtime": 1783688500567.9602,
+      "size": 4300
+    },
+    "/Users/bcarreira/Projects/Personal/carreira-cloud/codebase-wiki/docs/architecture.md": {
+      "hash": "70ac35b53143c5dc1af742e5ca4ed8e6cceabbf60e71f1df17504441055d05a7",
+      "chunkCount": 1,
+      "indexedAt": 1783707453122,
+      "mtime": 1783643843170.9465,
+      "size": 8395
+    },
+    "/Users/bcarreira/Projects/Personal/carreira-cloud/codebase-wiki/docs/configuration.md": {
+      "hash": "c2e5cc303310d6c33beb181ea081dc2ce6ccd35a47862245acf0d3e583fe68f5",
+      "chunkCount": 1,
+      "indexedAt": 1783707453122,
+      "mtime": 1783643806464.363,
+      "size": 4608
+    },
+    "/Users/bcarreira/Projects/Personal/carreira-cloud/codebase-wiki/docs/getting-started.md": {
+      "hash": "78ecd83559d986b1f9c0210c8afcdbce4b8a86312daf21950900f62617ad2ec0",
+      "chunkCount": 1,
+      "indexedAt": 1783707453122,
+      "mtime": 1783643751771.6086,
+      "size": 2861
+    },
+    "/Users/bcarreira/Projects/Personal/carreira-cloud/codebase-wiki/docs/mcp-tools.md": {
+      "hash": "51c7c02edba9bc37dafc0c479ec01cc998fd853ebffb86385e415a479557cc38",
+      "chunkCount": 1,
+      "indexedAt": 1783707453122,
+      "mtime": 1783649657761.3813,
+      "size": 7119
+    },
+    "/Users/bcarreira/Projects/Personal/carreira-cloud/codebase-wiki/docs/self-learning.md": {
+      "hash": "b20ed8e112910cf10d91dc7883065ceb9cfbfdbba4280b56f69c9c70f01d7a44",
+      "chunkCount": 1,
+      "indexedAt": 1783707453122,
+      "mtime": 1783643788969.034,
+      "size": 4091
+    },
+    "/Users/bcarreira/Projects/Personal/carreira-cloud/codebase-wiki/package.json": {
+      "hash": "964a2b4e324c224967929263894eed6d47c0969b509959e4ac9b8736adaa83e5",
+      "chunkCount": 16,
+      "indexedAt": 1783707453122,
+      "mtime": 1783681125339.506,
+      "size": 1300
+    },
+    "/Users/bcarreira/Projects/Personal/carreira-cloud/codebase-wiki/plan-discover-graphrag.md": {
+      "hash": "27742b1c550645929497a5d48330821fa009b56fdfb898df6586fa2b100e4941",
+      "chunkCount": 1,
+      "indexedAt": 1783707453122,
+      "mtime": 1783682430192.6736,
+      "size": 6181
+    },
+    "/Users/bcarreira/Projects/Personal/carreira-cloud/codebase-wiki/rules/codebase_wiki_rules.md": {
+      "hash": "9b2af6b257e9b1a48d0c88386c2e09b4696a02d9372684f1b0a7d24463bf20cf",
+      "chunkCount": 1,
+      "indexedAt": 1783707453122,
+      "mtime": 1783681109164.643,
+      "size": 2608
+    },
+    "/Users/bcarreira/Projects/Personal/carreira-cloud/codebase-wiki/schema.json": {
+      "hash": "6ac6abfb5b41f510408689d112e6ce9fe92a92d2f21076e4713d9dc5e55e3277",
+      "chunkCount": 5,
+      "indexedAt": 1783707453122,
+      "mtime": 1783638717426.519,
+      "size": 2344
+    },
+    "/Users/bcarreira/Projects/Personal/carreira-cloud/codebase-wiki/skills/architectural-planning/SKILL.md": {
+      "hash": "5defab736fb6e42ac18449b3d80dcda0b3f1647c0f287a2b881622a4d71cf430",
+      "chunkCount": 1,
+      "indexedAt": 1783707453122,
+      "mtime": 1783642088326.6084,
+      "size": 4311
+    },
+    "/Users/bcarreira/Projects/Personal/carreira-cloud/codebase-wiki/skills/contextual-debugging/SKILL.md": {
+      "hash": "a0b4d4ba63d61f82c80b869594138358b6f551dd58abc3c1df5b5d82697c3a15",
+      "chunkCount": 1,
+      "indexedAt": 1783707453122,
+      "mtime": 1783643057577.2354,
+      "size": 976
+    },
+    "/Users/bcarreira/Projects/Personal/carreira-cloud/codebase-wiki/src/cli.ts": {
+      "hash": "00c3823dbd0afc83f3cc25e74c6c8effa2c56874896feab9dd38c637b419f154",
+      "chunkCount": 18,
+      "indexedAt": 1783707453122,
+      "mtime": 1783706793562.6128,
+      "size": 33499
+    },
+    "/Users/bcarreira/Projects/Personal/carreira-cloud/codebase-wiki/src/extractor/index.ts": {
+      "hash": "95243c9f49157b5a5d4be78852353df490098697d3610c613163e4f83e50f5e6",
+      "chunkCount": 7,
+      "indexedAt": 1783707453122,
+      "mtime": 1783706890025.3416,
+      "size": 12200
+    },
+    "/Users/bcarreira/Projects/Personal/carreira-cloud/codebase-wiki/src/lancedb/client.ts": {
+      "hash": "1127ebc73f0a43ce4c4712ffdea6843329d1cc10ced3413b712a604c40409faf",
+      "chunkCount": 26,
+      "indexedAt": 1783707453122,
+      "mtime": 1783706143596.2368,
+      "size": 13705
+    },
+    "/Users/bcarreira/Projects/Personal/carreira-cloud/codebase-wiki/src/mcp-server.ts": {
+      "hash": "1eb2bbc0a30ff07c6ff4179357b39bdbc2c7efedd4e36065761c816e84f0fabf",
+      "chunkCount": 3,
+      "indexedAt": 1783707453122,
+      "mtime": 1783706276469.0317,
+      "size": 16414
+    },
+    "/Users/bcarreira/Projects/Personal/carreira-cloud/codebase-wiki/src/parser/go-parser.ts": {
+      "hash": "8e698cf7eb18ccba7001efa37adad09b3ce717e14fcafd6bd82e1b77ae2a3d0a",
+      "chunkCount": 2,
+      "indexedAt": 1783707453122,
+      "mtime": 1783683342183.0464,
+      "size": 3826
+    },
+    "/Users/bcarreira/Projects/Personal/carreira-cloud/codebase-wiki/src/types.ts": {
+      "hash": "f5d7f99a5949d0b4c157f80e6eec582e6153c417374a7854eefea768f99dfd8a",
+      "chunkCount": 12,
+      "indexedAt": 1783707453122,
+      "mtime": 1783706207463.207,
+      "size": 2438
+    },
+    "/Users/bcarreira/Projects/Personal/carreira-cloud/codebase-wiki/src/ui-server.ts": {
+      "hash": "847fb0a22065e95bbda7f9433a53f2ad6319b3817d3ca4cd56a2088a13f2610e",
+      "chunkCount": 5,
+      "indexedAt": 1783707453122,
+      "mtime": 1783706325283.2239,
+      "size": 35527
+    },
+    "/Users/bcarreira/Projects/Personal/carreira-cloud/codebase-wiki/tsconfig.json": {
+      "hash": "1386d87ada1598dc8e2f9abd377a5410cd7a5e9ba08e84264fb34109a128e273",
+      "chunkCount": 3,
+      "indexedAt": 1783707453122,
+      "mtime": 1783640080717.2854,
+      "size": 656
+    }
+  },
+  "schemaVersion": 1,
+  "lastIndexedAt": 1783707453125,
+  "lastGitCommit": "7bba311835a47e27d724d5b887f9594bae3d1b2c"
+}

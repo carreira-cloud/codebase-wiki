@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 import type { WikiDoc, WikiNote, WikiFlow, WikiProvenance, MetricEntry, GraphNode, GraphEdge } from "../types";
 
 function defaultProvenance(raw: string | undefined, timestamp: number): WikiProvenance {
@@ -312,8 +313,13 @@ export class LanceDBClient {
   async addNote(note: WikiNote): Promise<void> {
     const table = this.tablePath("notes");
     const notes = this.readTable("notes");
+
+    // Dedup: skip if same normalized topic+content already exists
+    const hash = createHash("sha256").update(note.topic.toLowerCase().trim() + note.content.slice(0, 120).toLowerCase().trim()).digest("hex").slice(0, 12);
+    if (notes.some(n => (n.id as string)?.startsWith("dedup-") && (n.id as string)?.includes(hash))) return;
+
     notes.push({
-      id: note.id,
+      id: `dedup-${hash}-${Date.now()}`,
       type: note.type,
       topic: note.topic,
       content: note.content,

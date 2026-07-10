@@ -59,7 +59,7 @@ export interface WikiFlow {
 
 // --- Graph types ---
 
-export type GraphNodeType = "Service" | "API" | "Model" | "Flow" | "FlowStep" | "Event" | "File";
+export type GraphNodeType = "Service" | "API" | "Model" | "Flow" | "FlowStep" | "Event" | "File" | "Cache";
 
 export type GraphEdgeType = "HAS_API" | "HAS_MODEL" | "HAS_FLOW" | "DEPENDS_ON" |
   "STEP" | "REFERENCES" | "CALLS" | "TRIGGERS" | "COMPENSATES" | "PRODUCES" | "CONSUMES";

@@ -2,3 +2,5 @@ node_modules/
 dist/
 .codebase-wiki/
 *.log
+.codebase-wiki/rag_db/.lancedb/
+.opencode/rag_db/

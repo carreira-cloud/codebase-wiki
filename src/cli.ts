@@ -4,9 +4,11 @@ import { cpSync, existsSync, mkdirSync, statSync, watch, readFileSync, writeFile
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
+import { execSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { handleMCPRequest } from "./mcp-server";
 import { getClient } from "./lancedb/client";
-import type { WikiFlow, WikiProvenance } from "./types";
+import type { WikiFlow, WikiProvenance, GraphEdge } from "./types";
 import { startUIServer } from "./ui-server";
 import { discoverServices } from "./extractor/index";
 
@@ -132,20 +134,21 @@ program
   ${svcEvents.length > 0 ? `Events (${svcEvents.length}):\n${svcEvents.map(e => `- ${e.data.direction} ${e.data.name} (${e.data.fileRef})`).join("\n").slice(0, 1000)}` : ""}`;
 
           const serviceInfo = `Service: ${svcName} | Language: ${language} | Path: ${svcPath}`;
+          const sourceHash = hashContext(fileContext, astContext);
 
           try {
             process.stdout.write(`   📝 ${svcName} `);
 
             // Phase 1: Generate wiki doc
-            const docResult = await phaseGenerateDoc(svcName, svcPath, serviceInfo, fileContext, astContext);
+            const docResult = await phaseGenerateDoc(svcName, svcPath, serviceInfo, fileContext, astContext, sourceHash);
             process.stdout.write(`📖`);
 
             // Phase 2: Generate flows (sequences + state machines)
-            const flowCount = await phaseGenerateFlows(svcName, svcPath, serviceInfo, fileContext, astContext);
+            const flowCount = await phaseGenerateFlows(svcName, svcPath, serviceInfo, fileContext, astContext, sourceHash);
             process.stdout.write(`${flowCount > 3 ? '🔄🧬' : '🔄'}`);
 
             // Phase 3: Generate notes
-            const noteCount = await phaseGenerateNotes(svcName, svcPath, serviceInfo, fileContext, astContext);
+            const noteCount = await phaseGenerateNotes(svcName, svcPath, serviceInfo, fileContext, astContext, sourceHash);
             console.log(` doc:${docResult}K flows:${flowCount} (incl state machines) notes:${noteCount}`);
           } catch (e) {
             console.log(` ⚠ ${String(e).slice(0, 80)}`);
@@ -209,7 +212,7 @@ ${members.map(f => {
             eventsEmitted: allEvents.emitted,
             eventsConsumed: allEvents.consumed,
             sagaId,
-            provenance: llmProvenance("saga"),
+            provenance: llmProvenance("", "saga"),
             indexedAt: Date.now(),
           });
           console.log(`   📐 ${sagaId}: ${members.length} flows across ${services.length} services`);
@@ -506,9 +509,19 @@ function redactSecrets(content: string): string {
     .replace(/(api_key|secret|token|password|passwd|credential)\s*[=:]\s*["']?[^\s"',}\]\)]+["']?/gi, "$1=***REDACTED***");
 }
 
-function llmProvenance(phase = ""): WikiProvenance {
+function gitCommit(): string {
+  try { return execSync("git rev-parse HEAD", { encoding: "utf-8", timeout: 3000 }).trim(); } catch { return ""; }
+}
+
+function hashContext(...parts: string[]): string {
+  const h = createHash("sha256");
+  for (const p of parts) h.update(p);
+  return h.digest("hex").slice(0, 16);
+}
+
+function llmProvenance(sourceHash: string, phase = ""): WikiProvenance {
   return {
-    sourceCommit: "", sourceHash: "",
+    sourceCommit: gitCommit(), sourceHash,
     generatedAt: Date.now(), lastSeenAt: Date.now(),
     generator: "llm",
     model: process.env.WIKI_LLM_MODEL || "local",
@@ -519,7 +532,7 @@ function llmProvenance(phase = ""): WikiProvenance {
   };
 }
 
-async function callLLM(systemPrompt: string, userContent: string, phase = ""): Promise<{ text: string; tokensIn: number; tokensOut: number }> {
+async function callLLM(systemPrompt: string, userContent: string, sourceHash: string, phase = ""): Promise<{ text: string; tokensIn: number; tokensOut: number; cacheHit: boolean }> {
   const url = process.env.WIKI_LLM_URL || "http://192.168.100.207:8080/v1/chat/completions";
   const model = process.env.WIKI_LLM_MODEL || "Qwen_Qwen3.6-35B-A3B-Q4_K_M.gguf";
   const provider = new URL(url).hostname;
@@ -528,6 +541,31 @@ async function callLLM(systemPrompt: string, userContent: string, phase = ""): P
   const timeoutMs = parseInt(process.env.WIKI_LLM_TIMEOUT_MS || "120000", 10);
   const sessionId = process.env.WIKI_SESSION_ID || `cli-${Date.now()}`;
   const shouldRedact = process.env.WIKI_REDACT_SECRETS !== "false";
+  const promptHash = hashContext(systemPrompt, phase);
+
+  // Cache check: keyed on source hash + prompt
+  const cacheKey = `llm:${sourceHash}:${promptHash}:${model}:${phase}`;
+  if (process.env.WIKI_CACHE !== "false" && sourceHash) {
+    try {
+      const client = getClient(join(process.cwd(), ".codebase-wiki/rag_db"));
+      await client.connect();
+      const { nodes } = await client.loadGraph();
+      const cacheNode = nodes.find(n => n.id === cacheKey && n.type === "Cache");
+      if (cacheNode && (cacheNode.data as { content?: string })?.content) {
+        const cached = (cacheNode.data as { tokensIn: number; tokensOut: number; content: string });
+        // Record cache-hit metric
+        await client.addMetric({
+          id: `llm-${Date.now()}`,
+          sessionId, source: "cli", tool: `discover--llm${phase ? '-' + phase : ''}`,
+          model, provider,
+          tokensIn: 0, tokensOut: 0, cacheHit: true,
+          durationMs: 0,
+          timestamp: Date.now(),
+        });
+        return { text: cached.content, tokensIn: 0, tokensOut: 0, cacheHit: true };
+      }
+    } catch { /* cache miss, proceed */ }
+  }
 
   const safeContent = shouldRedact ? redactSecrets(userContent) : userContent;
 
@@ -568,14 +606,22 @@ async function callLLM(systemPrompt: string, userContent: string, phase = ""): P
       durationMs: Date.now() - start,
       timestamp: Date.now(),
     });
+    // Store in cache for future runs
+    if (sourceHash && text) {
+      const { nodes } = await client.loadGraph();
+      const updated = nodes.filter(n => n.id !== cacheKey);
+      updated.push({ id: cacheKey, type: "Cache", data: { content: text, tokensIn: Math.round(tokensIn), tokensOut: Math.round(tokensOut) } });
+      const edges = (await client.loadGraph()).edges.filter(e => e.from !== cacheKey && e.to !== cacheKey);
+      await client.saveGraph(updated, edges as GraphEdge[]);
+    }
   } catch { /* fail-open */ }
 
-  return { text, tokensIn: Math.round(tokensIn), tokensOut: Math.round(tokensOut) };
+  return { text, tokensIn: Math.round(tokensIn), tokensOut: Math.round(tokensOut), cacheHit: false };
 }
 
 // Phase 1: Generate full wiki documentation
 async function phaseGenerateDoc(
-  svcName: string, svcPath: string, serviceInfo: string, fileContext: string, astContext: string,
+  svcName: string, svcPath: string, serviceInfo: string, fileContext: string, astContext: string, sourceHash: string,
 ): Promise<number> {
   const prompt = `You are a Principal Software Architect. Analyze the service below and produce a comprehensive architectural wiki document.
 
@@ -597,7 +643,7 @@ async function phaseGenerateDoc(
   - Output ONLY valid Markdown (no JSON wrapper, no explanations before/after)`;
 
   const context = `${serviceInfo}\n\n## Source Files\n${fileContext.slice(0, 12000)}\n\n## AST Analysis\n${astContext}`;
-  const { text: content } = await callLLM(prompt, context, "doc");
+  const { text: content } = await callLLM(prompt, context, sourceHash, "doc");
   if (!content || content.length < 200) return 0;
 
   const client = getClient(join(process.cwd(), ".codebase-wiki/rag_db"));
@@ -608,19 +654,15 @@ async function phaseGenerateDoc(
   await client.indexDoc({
     id: svcName, serviceName: svcName, servicePath: svcPath,
     language: "unknown", sections: {}, content,
-    provenance: {
-      sourceCommit: "", sourceHash: "", generatedAt: Date.now(), lastSeenAt: Date.now(),
-      generator: "llm", model, provider, promptVersion: "phase1-doc-v1", runId,
-      confidence: 0.7, evidence: [], status: "current",
-    },
-    indexedAt: Date.now(),
+      provenance: llmProvenance(sourceHash, "doc"),
+      indexedAt: Date.now(),
   });
   return Math.floor(content.length / 1000);
 }
 
 // Phase 2: Generate complete flows with file references + state machines
 async function phaseGenerateFlows(
-  svcName: string, svcPath: string, serviceInfo: string, fileContext: string, astContext: string,
+  svcName: string, svcPath: string, serviceInfo: string, fileContext: string, astContext: string, sourceHash: string,
 ): Promise<number> {
   const client = getClient(join(process.cwd(), ".codebase-wiki/rag_db"));
   await client.connect();
@@ -644,7 +686,7 @@ async function phaseGenerateFlows(
   - Output ONLY JSON lines (one per flow, no markdown fences, no explanations)`;
 
   const seqContext = `${serviceInfo}\n\n## AST Data (use file paths+events from here)\n${astContext}\n\n## Source Files\n${fileContext.slice(0, 4000)}`;
-  const { text: seqText } = await callLLM(seqPrompt, seqContext);
+  const { text: seqText } = await callLLM(seqPrompt, seqContext, sourceHash, "flows-seq");
 
   let count = 0;
   if (seqText) {
@@ -663,7 +705,7 @@ async function phaseGenerateFlows(
           eventsEmitted: (obj.events_emitted || "").split(",").map((e: string) => e.trim()).filter(Boolean),
           eventsConsumed: (obj.events_consumed || "").split(",").map((e: string) => e.trim()).filter(Boolean),
           sagaId: obj.saga_id || "",
-          provenance: llmProvenance("flows"),
+          provenance: llmProvenance(sourceHash, "flows"),
           indexedAt: Date.now(),
         });
         count++;
@@ -692,7 +734,7 @@ async function phaseGenerateFlows(
   10. Output ONLY JSON lines (one per state machine, no markdown fences, no explanations).`;
 
   const stateContext = `${serviceInfo}\n\n## AST Data\n${astContext}\n\n## Source Files (look for status enums, state constants, transition logic)\n${fileContext.slice(0, 6000)}`;
-  const { text: stateText } = await callLLM(statePrompt, stateContext);
+  const { text: stateText } = await callLLM(statePrompt, stateContext, sourceHash, "flows-state");
 
   if (stateText) {
     for (const line of stateText.split("\n")) {
@@ -710,7 +752,7 @@ async function phaseGenerateFlows(
           eventsEmitted: (obj.events_emitted || "").split(",").map((e: string) => e.trim()).filter(Boolean),
           eventsConsumed: [],
           sagaId: obj.saga_id || "",
-          provenance: llmProvenance("state-machine"),
+          provenance: llmProvenance(sourceHash, "state-machine"),
           indexedAt: Date.now(),
         });
         count++;
@@ -723,7 +765,7 @@ async function phaseGenerateFlows(
 
 // Phase 3: Generate notes (patterns, gotchas, conventions)
 async function phaseGenerateNotes(
-  svcName: string, svcPath: string, serviceInfo: string, fileContext: string, astContext: string,
+  svcName: string, svcPath: string, serviceInfo: string, fileContext: string, astContext: string, sourceHash: string,
 ): Promise<number> {
   const prompt = `You are a Principal Software Architect. After analyzing a service, identify concrete patterns, gotchas, and conventions.
 
@@ -740,7 +782,7 @@ async function phaseGenerateNotes(
   - Output ONLY JSON lines (no markdown fences, no explanations)`;
 
   const context = `${serviceInfo}\n\n## Source Files\n${fileContext.slice(0, 8000)}\n\n## AST Analysis\n${astContext}`;
-  const { text } = await callLLM(prompt, context);
+  const { text } = await callLLM(prompt, context, sourceHash, "notes");
   if (!text) return 0;
 
   const client = getClient(join(process.cwd(), ".codebase-wiki/rag_db"));
