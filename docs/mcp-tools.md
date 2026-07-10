@@ -1,6 +1,6 @@
 # MCP Tools Reference
 
-The codebase-wiki MCP server exposes 9 tools via stdio JSON-RPC 2.0.
+The codebase-wiki MCP server exposes 12 tools via stdio JSON-RPC 2.0.
 
 ## Server Protocol
 
@@ -265,3 +265,72 @@ Common errors:
 - `-32700` — Parse error (malformed JSON)
 - `-32601` — Unknown method
 - `-32000` — Tool execution error (invalid arguments, missing service, etc.)
+
+---
+
+## Flow Tools (Workflows & Diagrams)
+
+### `wiki_flow_index`
+
+Index a workflow/sequence diagram with keywords and linked services.
+
+```json
+{
+  "method": "tools/call",
+  "params": {
+    "name": "wiki_flow_index",
+    "arguments": {
+      "service_name": "oms-microservice",
+      "flow_name": "Checkout — Happy Path",
+      "summary": "Complete checkout: idempotency → order → payment → fulfillment",
+      "keywords": "checkout,order,payment,fulfillment",
+      "linked_services": "cart-microservice,payment-microservice,callback-microservice",
+      "flow_type": "happy_path",
+      "content": "## Sequence Diagram\n```mermaid\nsequenceDiagram\n..."
+    }
+  }
+}
+```
+
+**Parameters:**
+| Field | Required | Description |
+|-------|----------|-------------|
+| `service_name` | Yes | Service this flow belongs to |
+| `flow_name` | Yes | Descriptive name, e.g. "Checkout — Happy Path" |
+| `content` | Yes | Mermaid diagram + text description |
+| `summary` | No | One-line description |
+| `keywords` | No | Comma-separated keywords for discoverability |
+| `linked_services` | No | Comma-separated services involved in this flow |
+| `flow_type` | No | happy_path, error_path, edge_case, recovery, or full |
+
+### `wiki_flow_search`
+
+Search flows by keyword across all services.
+
+```json
+{
+  "method": "tools/call",
+  "params": {
+    "name": "wiki_flow_search",
+    "arguments": { "query": "checkout", "service": "oms-microservice" }
+  }
+}
+```
+
+**Response:** Array of flows with service, flow name, type, summary, keywords, linked services.
+
+### `wiki_flow_list`
+
+List all flows, optionally filtered.
+
+```json
+{
+  "method": "tools/call",
+  "params": {
+    "name": "wiki_flow_list",
+    "arguments": { "service": "oms-microservice", "flow_type": "error_path" }
+  }
+}
+```
+
+Both `service` and `flow_type` are optional.
