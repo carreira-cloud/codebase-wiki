@@ -15,8 +15,10 @@ export async function startUIServer(port: number, dbPath: string) {
       if (url.pathname === "/") return html(renderHomePage());
 
       if (url.pathname === "/api/services") {
-        const services = await client.listServices();
-        return json(services);
+        const offset = parseInt(url.searchParams.get("offset") || "0", 10);
+        const limit = parseInt(url.searchParams.get("limit") || "20", 10);
+        const all = await client.listServices();
+        return json({ services: all.slice(offset, offset + limit), total: all.length });
       }
 
       if (url.pathname === "/api/service") {
@@ -27,20 +29,44 @@ export async function startUIServer(port: number, dbPath: string) {
 
       if (url.pathname === "/api/search") {
         const q = url.searchParams.get("q") || "";
-        const docs = await client.searchDocs(q);
-        const notes = await client.searchNotes(q);
-        return json({ docs, notes });
+        const sq = q.toLowerCase();
+        const offset = parseInt(url.searchParams.get("offset") || "0", 10);
+        const limit = parseInt(url.searchParams.get("limit") || "20", 10);
+        const allDocs = await client.searchDocs(q);
+        const allNotes = await client.searchNotes(q);
+        const allFlows = (await client.listFlows()).filter(f =>
+          (f.flowName || "").toLowerCase().includes(sq) ||
+          (f.summary || "").toLowerCase().includes(sq) ||
+          f.keywords.some(k => k.toLowerCase().includes(sq)) ||
+          (f.serviceName || "").toLowerCase().includes(sq)
+        );
+        return json({
+          docs: allDocs.slice(offset, offset + limit),
+          notes: allNotes.slice(offset, offset + limit),
+          flows: allFlows.slice(offset, offset + limit),
+          totalDocs: allDocs.length, totalNotes: allNotes.length, totalFlows: allFlows.length,
+        });
       }
 
       if (url.pathname === "/api/notes") {
         const type = url.searchParams.get("type") || undefined;
-        const notes = await client.listNotes(type);
-        return json(notes);
+        const service = url.searchParams.get("service") || undefined;
+        const offset = parseInt(url.searchParams.get("offset") || "0", 10);
+        const limit = parseInt(url.searchParams.get("limit") || "50", 10);
+        let all = await client.listNotes(type);
+        if (service) all = all.filter(n => (n.context || "").toLowerCase().includes(service.toLowerCase()) || (n.topic || "").toLowerCase().includes(service.toLowerCase()));
+        return json({ notes: all.slice(offset, offset + limit), total: all.length });
       }
 
       if (url.pathname === "/api/stats") {
         const stats = await client.stats();
-        return json(stats);
+        const flows = await client.listFlows();
+        const serviceFlows: Record<string, number> = {};
+        const serviceNotes: Record<string, number> = {};
+        for (const f of flows) { const s = f.serviceName; serviceFlows[s] = (serviceFlows[s] || 0) + 1; }
+        const allNotes = await client.listNotes();
+        for (const n of allNotes) { const ctx = n.context || ""; const parts = ctx.split("/"); const s = parts[0] || "unknown"; serviceNotes[s] = (serviceNotes[s] || 0) + 1; }
+        return json({ ...stats, serviceFlows, serviceNotes });
       }
 
       if (url.pathname === "/api/note" && req.method === "POST") {
@@ -66,8 +92,10 @@ export async function startUIServer(port: number, dbPath: string) {
       if (url.pathname === "/api/flows") {
         const service = url.searchParams.get("service") || undefined;
         const type = url.searchParams.get("type") || undefined;
-        const flows = await client.listFlows(service, type);
-        return json(flows);
+        const offset = parseInt(url.searchParams.get("offset") || "0", 10);
+        const limit = parseInt(url.searchParams.get("limit") || "50", 10);
+        const all = await client.listFlows(service, type);
+        return json({ flows: all.slice(offset, offset + limit), total: all.length });
       }
 
       return notFound();
@@ -161,10 +189,19 @@ header h1 { font-size: 20px; }
 .note-form textarea { min-height: 80px; font-family: inherit; resize: vertical; }
 .note-form button { padding: 8px 20px; background: var(--accent); border: none; border-radius: 6px; color: #fff; cursor: pointer; }
 .empty { text-align: center; color: var(--text2); padding: 40px; }
+.pagination { display: flex; gap: 8px; justify-content: center; align-items: center; margin: 20px 0; }
+.pagination button { padding: 6px 14px; background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; color: var(--text); cursor: pointer; font-size: 13px; }
+.pagination button:disabled { opacity: 0.4; cursor: default; }
+.pagination .page-info { font-size: 13px; color: var(--text2); }
+.filter-bar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+.filter-bar select { padding: 6px 10px; background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 13px; }
+.filter-bar button.small { padding: 6px 12px; background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; color: var(--text2); cursor: pointer; font-size: 12px; }
+.filter-bar button.small:hover { color: var(--text); border-color: var(--accent); }
 .stats { display: flex; gap: 16px; margin-bottom: 20px; }
 .stat { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 16px 20px; flex: 1; text-align: center; }
 .stat .value { font-size: 28px; font-weight: 600; color: var(--accent); }
 .stat .label { font-size: 12px; color: var(--text2); margin-top: 4px; }
+.file-ref { display: inline-block; padding: 1px 6px; background: rgba(63,185,80,0.1); border-radius: 4px; font-size: 11px; margin: 2px; color: var(--green); font-family: monospace; }
 </style>
 </head>
 <body>
@@ -172,7 +209,7 @@ header h1 { font-size: 20px; }
   <header>
     <h1>🧠 Codebase Wiki</h1>
     <div style="display:flex;gap:12px;align-items:center">
-      <select id="serviceSelect" style="padding:6px 10px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px" onchange="navigateTo(location.origin + '?service=' + this.value)">
+      <select id="svcFilter" style="padding:6px 10px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px" onchange="onSvcFilter(this.value)">
       </select>
       <span id="statBadge" style="font-size:12px;color:var(--text2)"></span>
     </div>
@@ -181,17 +218,18 @@ header h1 { font-size: 20px; }
   <div id="searchResults"></div>
 
   <div class="search-bar" id="searchBar">
-    <input type="text" id="searchInput" placeholder="Search services, documentation, notes..." onkeyup="if(event.key==='Enter')search()">
-    <button onclick="search()">Search</button>
+    <input type="text" id="searchInput" placeholder="Search all: services, flows, notes..." onkeyup="if(event.key==='Enter')doSearch()">
+    <button onclick="doSearch()">Search</button>
+    <span id="searchMeta" style="font-size:12px;color:var(--text2);display:none"></span>
   </div>
 
   <div class="stats" id="statsBar"></div>
 
   <div class="tabs">
-    <div class="tab active" onclick="showPanel('services')">Services</div>
-    <div class="tab" onclick="showPanel('flows')">Flows</div>
-    <div class="tab" onclick="showPanel('notes')">Notes</div>
-    <div class="tab" onclick="showPanel('addNote')">+ Add Note</div>
+    <div class="tab active" onclick="switchTab('services')">Services</div>
+    <div class="tab" onclick="switchTab('flows')">Flows</div>
+    <div class="tab" onclick="switchTab('notes')">Notes</div>
+    <div class="tab" onclick="switchTab('addNote')">+ Add Note</div>
   </div>
 
   <div id="servicesPanel"></div>
@@ -211,229 +249,182 @@ header h1 { font-size: 20px; }
 </div>
 
 <script>
-const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
-let currentService = new URLSearchParams(location.search).get('service') || '';
+var esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
+var state={svc:'',tab:'services',page:0,limit:20};
 
-function clickCard(el) {
-  navigateTo(location.origin + '?service=' + encodeURIComponent(el.getAttribute('data-service')));
-}
+function api(p){return fetch(p).then(r=>r.ok?r.json():null);}
 
-async function api(path) {
-  const r = await fetch(path);
-  return r.ok ? r.json() : null;
-}
-
-async function load() {
-  const stats = await api('/api/stats');
-  if (stats) {
-    document.getElementById('statBadge').textContent = stats.services + ' services | ' + (stats.flows||0) + ' flows | ' + stats.notes + ' notes';
-    document.getElementById('statsBar').innerHTML =
-      '<div class="stat"><div class="value">' + stats.services + '</div><div class="label">Services</div></div>' +
-      '<div class="stat"><div class="value">' + Math.floor(stats.totalChars/1000) + 'K</div><div class="label">Content</div></div>' +
-      '<div class="stat"><div class="value">' + (stats.flows||0) + '</div><div class="label">Flows</div></div>' +
-      '<div class="stat"><div class="value">' + stats.notes + '</div><div class="label">Notes</div></div>';
+async function init(){
+  var sv=await api('/api/stats');
+  if(sv){
+    document.getElementById('statBadge').textContent=sv.services+' svc | '+(sv.flows||0)+' flows | '+sv.notes+' notes';
+    document.getElementById('statsBar').innerHTML=
+      '<div class="stat"><div class="value">'+sv.services+'</div><div class="label">Services</div></div>'+
+      '<div class="stat"><div class="value">'+Math.floor(sv.totalChars/1000)+'K</div><div class="label">Content</div></div>'+
+      '<div class="stat"><div class="value">'+(sv.flows||0)+'</div><div class="label">Flows</div></div>'+
+      '<div class="stat"><div class="value">'+sv.notes+'</div><div class="label">Notes</div></div>';
   }
-
-  if (currentService) {
-    loadService(currentService);
-  } else {
-    loadServices();
+  var all=await api('/api/services?limit=999');
+  if(all&&all.services){
+    window._serviceList=all.services;
+    var sel=document.getElementById('svcFilter');
+    sel.innerHTML='<option value="">— All Services —</option>'+
+      all.services.map(s=>'<option value="'+esc(s.name)+'"'+(s.name===state.svc?' selected':'')+'>'+esc(s.name)+'</option>').join('');
   }
-
-  const services = await api('/api/services');
-  if (services) {
-    const sel = document.getElementById('serviceSelect');
-    sel.innerHTML = '<option value="">— All Services —</option>' +
-      services.map(s => '<option value="' + s.name + '"' + (s.name === currentService ? ' selected' : '') + '>' + s.name + '</option>').join('');
-  }
+  if(state.svc) loadService(state.svc);
+  else switchTab(state.tab);
 }
 
-function navigateTo(url) {
-  const u = new URL(url);
-  currentService = u.searchParams.get('service') || '';
-  window.history.pushState({}, '', url);
-  load();
+function onSvcFilter(v){
+  state.svc=v; state.page=0;
+  if(!v){ switchTab(state.tab); return; }
+  loadService(v);
 }
 
-async function loadServices() {
-  const services = await api('/api/services');
-  const p = document.getElementById('servicesPanel');
-  if (!services || services.length === 0) {
-    p.innerHTML = '<div class="empty">No services indexed yet.<br><br>Run <code>/wiki generate</code> in your agent to create documentation.</div>';
-    return;
-  }
-  p.innerHTML = services.map(s =>
-    '<div class="card" data-service="' + esc(s.name) + '" onclick="clickCard(this)" style="cursor:pointer">' +
-    '<h3>' + esc(s.name) + '</h3>' +
-    '<div class="meta">' + esc(s.path) + ' | ' + Math.floor(s.size/1000) + 'K chars</div>' +
-    '</div>'
-  ).join('');
+function switchTab(name){
+  state.tab=name; state.page=0;
+  var tabs=['services','flows','notes','addNote'];
+  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',tabs[i]===name));
+  ['servicesPanel','flowsPanel','notesPanel','addNotePanel'].forEach(id=>document.getElementById(id).style.display='none');
+  var pid=name==='services'?'servicesPanel':name==='flows'?'flowsPanel':name==='notes'?'notesPanel':name==='addNote'?'addNotePanel':'';
+  document.getElementById(pid).style.display='block';
+  document.getElementById('searchBar').style.display=name==='addNote'?'none':'flex';
+  document.getElementById('searchResults').style.display='none';
+  if(name==='services'&&!state.svc) loadServices();
+  if(name==='flows') loadFlows();
+  if(name==='notes') loadNotes();
 }
 
-async function loadService(name) {
-  document.getElementById('searchBar').style.display = 'none';
-  const doc = await api('/api/service?name=' + encodeURIComponent(name));
-  const p = document.getElementById('servicesPanel');
-  if (!doc) {
-    p.innerHTML = '<div class="empty">Documentation not found for "' + esc(name) + '"</div>';
-    return;
-  }
-  var html = '<div class="service-content"><a href="?" style="font-size:13px">← Back to all services</a><br><br>';
-  var raw = typeof marked !== 'undefined' ? marked.parse(doc.content) : '<pre>' + esc(doc.content) + '</pre>';
-  html += (typeof DOMPurify !== 'undefined' ? DOMPurify.sanitize(raw) : esc(raw)) + '</div>';
-  p.innerHTML = html;
-  // Fix mermaid blocks: marked wraps them in <code>, mermaid needs <pre class="mermaid">
-  // Use textContent (not innerHTML) to avoid HTML parser mangling mermaid syntax
-  var blocks = p.querySelectorAll('code.language-mermaid');
-  blocks.forEach(function(b) {
-    var pre = b.parentElement;
-    pre.className = 'mermaid';
-    pre.textContent = b.textContent;
-  });
-  if (typeof mermaid !== 'undefined') { try { mermaid.run({querySelector:'.mermaid'}); } catch(e) {} }
-}
-
-function toggleFlow(el) {
-  var content = el.querySelector('.flow-content');
-  if (content) content.style.display = content.style.display === 'none' ? 'block' : 'none';
-}
-
-async function loadFlows() {
-  var flows = await api('/api/flows');
-  var p = document.getElementById('flowsPanel');
-  if (!flows || flows.length === 0) {
-    p.innerHTML = '<div class="empty">No flows indexed yet.<br><br>Run <code>/wiki discover-flows</code> to discover and index workflows.</div>';
-    return;
-  }
-  p.innerHTML = flows.map(function(f) {
-    var typeClass = getFlowClass(f.flowType);
-    return '<div class="card" onclick="toggleFlow(this)" style="cursor:pointer">' +
-      '<span class="note-type ' + typeClass + '">' + esc(f.flowType || '') + '</span>' +
-      '<strong>' + esc(f.flowName) + '</strong>' +
-      '<div class="meta" style="margin-top:4px">' + esc(f.serviceName) + ' | ' + esc(f.summary || '') + '</div>' +
-      (f.keywords && f.keywords.length ? '<div style="margin-top:4px">' + f.keywords.map(function(k){return '<span class="tag">'+esc(k)+'</span>'}).join('') + '</div>' : '') +
-      (f.linkedServices && f.linkedServices.length ? '<div style="margin-top:4px;font-size:12px;color:var(--text2)">Linked: ' + f.linkedServices.map(function(s){return '<span class="tag">'+esc(s)+'</span>'}).join(' ') + '</div>' : '') +
-      '<div class="flow-content" style="display:none;margin-top:12px;padding:12px;background:var(--bg);border-radius:6px;overflow-x:auto">' +
-        (typeof marked !== 'undefined' ? (typeof DOMPurify !== 'undefined' ? DOMPurify.sanitize(marked.parse(f.content||'')) : marked.parse(f.content||'')) : '<pre>'+esc(f.content||'')+'</pre>') +
-      '</div>' +
+function renderPagination(total,loadFn,extra){
+  if(total<=state.limit)return'';
+  var pages=Math.ceil(total/state.limit);
+  return'<div class="pagination">'+
+    '<button '+(state.page===0?'disabled':'')+' onclick="'+loadFn+'('+Math.max(0,state.page-1)+(extra||'')+')">« Prev</button>'+
+    '<span class="page-info">Page '+(state.page+1)+' of '+pages+' ('+total+' total)</span>'+
+    '<button '+((state.page+1)*state.limit>=total?'disabled':'')+' onclick="'+loadFn+'('+(state.page+1)+(extra||'')+')">Next »</button>'+
     '</div>';
+}
+
+async function loadServices(page){
+  if(typeof page==='number')state.page=page;
+  var data=await api('/api/services?offset='+(state.page*state.limit)+'&limit='+state.limit);
+  var p=document.getElementById('servicesPanel');
+  if(!data||!data.services.length){p.innerHTML='<div class="empty">No services indexed.</div>';return;}
+  p.innerHTML=data.services.map(s=>
+    '<div class="card" style="cursor:pointer" onclick="onSvcFilter(' + "'" + esc(s.name) + "'" + ')">'+
+    '<h3>'+esc(s.name)+'</h3><div class="meta">'+esc(s.path)+' | '+Math.floor(s.size/1000)+'K</div></div>'
+  ).join('')+renderPagination(data.total,'loadServices');
+}
+
+async function loadService(name){
+  state.svc=name; document.getElementById('svcFilter').value=name;
+  document.getElementById('searchBar').style.display='flex';
+  var doc=await api('/api/service?name='+encodeURIComponent(name));
+  var p=document.getElementById('servicesPanel');
+  if(!doc){p.innerHTML='<div class="empty">No docs for "'+esc(name)+'"</div>';return;}
+  var h='<div class="service-content"><a href="#" onclick="' + "onSvcFilter('');return false" + '" style="font-size:13px">← All services</a><br><br>';
+  var raw=typeof marked!=='undefined'?marked.parse(doc.content):'<pre>'+esc(doc.content)+'</pre>';
+  h+=(typeof DOMPurify!=='undefined'?DOMPurify.sanitize(raw):esc(raw))+'</div>';
+  p.innerHTML=h;
+  p.querySelectorAll('code.language-mermaid').forEach(function(b){var pr=b.parentElement;pr.className='mermaid';pr.textContent=b.textContent;});
+  if(typeof mermaid!=='undefined')try{mermaid.run({querySelector:'.mermaid'});}catch(e){}
+  // Show flows for this service below doc
+  document.getElementById('flowsPanel').style.display='block';
+  document.getElementById('flowsPanel').innerHTML='<div id="svcFlowsPanel"></div>';
+  loadSvcFlows(0);
+}
+
+async function loadSvcFlows(page){
+  if(typeof page==='number')state.page=page;
+  var data=await api('/api/flows?service='+encodeURIComponent(state.svc)+'&offset='+(state.page*state.limit)+'&limit='+state.limit);
+  var p=document.getElementById('svcFlowsPanel');
+  if(!data||!data.flows.length){p.innerHTML='<div class="empty" style="font-size:13px">No flows for this service.</div>';return;}
+  p.innerHTML='<h3 style="margin:20px 0 10px;font-size:15px;color:var(--accent)">Flows ('+data.total+')</h3>'+
+    '<button class="small" onclick="toggleAllFlows()" style="margin-bottom:8px">Expand All</button>'+
+    renderFlowCards(data.flows)+renderPagination(data.total,'loadSvcFlows');
+  p.querySelectorAll('code.language-mermaid').forEach(function(b){var pr=b.parentElement;pr.className='mermaid';pr.textContent=b.textContent;});
+  if(typeof mermaid!=='undefined')try{mermaid.run({querySelector:'#svcFlowsPanel .mermaid'});}catch(e){}
+}
+
+async function loadFlows(page){
+  if(typeof page==='number')state.page=page;
+  var params='?offset='+(state.page*state.limit)+'&limit='+state.limit;
+  if(state.svc)params+='&service='+encodeURIComponent(state.svc);
+  var data=await api('/api/flows'+params);
+  var p=document.getElementById('flowsPanel');
+  if(!data||!data.flows.length){p.innerHTML='<div class="empty">No flows.</div>';return;}
+  p.innerHTML='<div class="filter-bar">'+
+    '<select id="flowTypeFilter" onchange="loadFlows(0)" style="margin-right:8px">'+
+    '<option value="">All types</option><option value="happy_path">Happy Path</option><option value="error_path">Error Path</option><option value="edge_case">Edge Case</option><option value="recovery">Recovery</option><option value="state_machine">State Machine</option></select>'+
+    '<button class="small" onclick="toggleAllFlows()">Expand All</button></div>'+
+    renderFlowCards(data.flows)+renderPagination(data.total,'loadFlows');
+  p.querySelectorAll('code.language-mermaid').forEach(function(b){var pr=b.parentElement;pr.className='mermaid';pr.textContent=b.textContent;});
+  if(typeof mermaid!=='undefined')try{mermaid.run({querySelector:'#flowsPanel .mermaid'});}catch(e){}
+}
+
+function renderFlowCards(flows){
+  return flows.map(function(f){
+    var tc=getFlowClass(f.flowType);
+    return'<div class="card" onclick="tgl(this)" style="cursor:pointer">'+
+      '<span class="note-type '+tc+'">'+esc(f.flowType||'')+'</span>'+
+      '<strong>'+esc(f.flowName)+'</strong>'+
+      '<div class="meta" style="margin-top:4px">'+esc(f.serviceName)+' | '+esc(f.summary||'')+'</div>'+
+      (f.keywords&&f.keywords.length?'<div style="margin-top:4px">'+f.keywords.map(function(k){return'<span class="tag">'+esc(k)+'</span>'}).join('')+'</div>':'')+
+      (f.linkedServices&&f.linkedServices.length?'<div style="margin-top:4px;font-size:12px;color:var(--text2)">Linked: '+f.linkedServices.map(function(s){return'<span class="tag">'+esc(s)+'</span>'}).join(' ')+'</div>':'')+
+      (f.fileRefs&&f.fileRefs.length?'<div style="margin-top:4px">'+f.fileRefs.map(function(r){return'<span class="file-ref">'+esc(r)+'</span>'}).join(' ')+'</div>':'')+
+      '<div class="flow-content" style="display:none;margin-top:12px;padding:12px;background:var(--bg);border-radius:6px;overflow-x:auto">'+
+        (typeof marked!=='undefined'?(typeof DOMPurify!=='undefined'?DOMPurify.sanitize(marked.parse(f.content||'')):marked.parse(f.content||'')):'<pre>'+esc(f.content||'')+'</pre>')+
+      '</div></div>';
   }).join('');
-  // Fix and render mermaid blocks in flows
-  // Use textContent (not innerHTML) to avoid HTML parser mangling mermaid syntax
-  var blocks = p.querySelectorAll('code.language-mermaid');
-  blocks.forEach(function(b) {
-    var pre = b.parentElement;
-    pre.className = 'mermaid';
-    pre.textContent = b.textContent;
-  });
-  if (typeof mermaid !== 'undefined') { try { mermaid.run({querySelector:'#flowsPanel .mermaid'}); } catch(e) {} }
 }
 
-function getFlowClass(type) {
-  var map = { happy_path:'integration', error_path:'gotcha', recovery:'integration', edge_case:'convention', full:'pattern', state_machine:'pattern' };
-  return 'type-' + (map[type] || 'gotcha');
+function tgl(el){var c=el.querySelector('.flow-content');if(c)c.style.display=c.style.display==='none'?'block':'none';}
+function toggleAllFlows(){var all=document.querySelectorAll('.flow-content');var anyHidden=Array.from(all).some(function(c){return c.style.display==='none'});all.forEach(function(c){c.style.display=anyHidden?'block':'none'});}
+
+function getFlowClass(t){var m={happy_path:'integration',error_path:'gotcha',recovery:'integration',edge_case:'convention',full:'pattern',state_machine:'pattern'};return'type-'+(m[t]||'gotcha');}
+
+async function loadNotes(page){
+  if(typeof page==='number')state.page=page;
+  var params='?offset='+(state.page*state.limit)+'&limit='+state.limit;
+  if(state.svc)params+='&service='+encodeURIComponent(state.svc);
+  var data=await api('/api/notes'+params);
+  var p=document.getElementById('notesPanel');
+  if(!data||!data.notes.length){p.innerHTML='<div class="empty">No notes.</div>';return;}
+  p.innerHTML=data.notes.map(function(n){
+    return'<div class="card"><span class="note-type type-'+esc(n.type)+'">'+esc(n.type)+'</span><strong>'+esc(n.topic)+'</strong>'+
+    (n.context?'<div class="meta" style="margin-top:4px">'+esc(n.context)+'</div>':'')+
+    '<div style="margin-top:6px;font-size:14px">'+esc(n.content.slice(0,300))+'</div>'+
+    (n.tags&&n.tags.length?'<div style="margin-top:6px">'+n.tags.map(function(t){return'<span class="tag">'+esc(t)+'</span>'}).join('')+'</div>':'')+'</div>';
+  }).join('')+renderPagination(data.total,'loadNotes');
 }
 
-async function loadNotes() {
-  const notes = await api('/api/notes');
-  const p = document.getElementById('notesPanel');
-  if (!notes || notes.length === 0) {
-    p.innerHTML = '<div class="empty">No notes yet. Agents automatically add notes when they discover something new.</div>';
-    return;
-  }
-  p.innerHTML = notes.map(n =>
-    '<div class="card">' +
-    '<span class="note-type type-' + esc(n.type) + '">' + esc(n.type) + '</span>' +
-    '<strong>' + esc(n.topic) + '</strong>' +
-    (n.context ? '<div class="meta" style="margin-top:4px">' + esc(n.context) + '</div>' : '') +
-    '<div style="margin-top:6px;font-size:14px">' + esc(n.content.slice(0, 300)) + '</div>' +
-    (n.tags && n.tags.length ? '<div style="margin-top:6px">' + n.tags.map(t => '<span class="tag">' + esc(t) + '</span>').join('') + '</div>' : '') +
-    '</div>'
-  ).join('');
+async function doSearch(page){
+  if(typeof page==='number')state.page=page;
+  var q=document.getElementById('searchInput').value.trim();
+  if(!q)return;
+  var data=await api('/api/search?q='+encodeURIComponent(q)+'&offset='+(state.page*state.limit)+'&limit='+state.limit);
+  if(!data)return;
+  var div=document.getElementById('searchResults');
+  var h='<h3 style="margin-bottom:12px">Results for "'+esc(q)+'"</h3>';
+  if(data.docs&&data.docs.length)h+='<h4 style="color:var(--text2);margin-bottom:8px">Services ('+data.totalDocs+')</h4>'+data.docs.map(function(d){var p=esc(d.content.slice(0,150).replace(` + `/\\n/g, ' '` + `));return'<div class="card" style="cursor:pointer" onclick="onSvcFilter(' + "'" + esc(d.serviceName) + "'" + ')"><h3>'+esc(d.serviceName)+'</h3><div class="preview">'+p+'...</div></div>';}).join('');
+  if(data.flows&&data.flows.length)h+='<h4 style="color:var(--text2);margin:12px 0 8px">Flows ('+data.totalFlows+')</h4>'+renderFlowCards(data.flows);
+  if(data.notes&&data.notes.length)h+='<h4 style="color:var(--text2);margin:12px 0 8px">Notes ('+data.totalNotes+')</h4>'+data.notes.map(function(n){return'<div class="card"><span class="note-type type-'+esc(n.type)+'">'+esc(n.type)+'</span><strong>'+esc(n.topic)+'</strong><div style="font-size:14px;margin-top:4px">'+esc(n.content.slice(0,150))+'</div></div>';}).join('');
+  if(!data.docs.length&&!data.flows.length&&!data.notes.length)h+='<div class="empty">No results.</div>';
+  var total=Math.max(data.totalDocs||0,data.totalFlows||0,data.totalNotes||0);
+  h+=renderPagination(total,'doSearch');
+  div.innerHTML=h;
+  div.querySelectorAll('code.language-mermaid').forEach(function(b){var pr=b.parentElement;pr.className='mermaid';pr.textContent=b.textContent;});
+  if(typeof mermaid!=='undefined')try{mermaid.run({querySelector:'#searchResults .mermaid'});}catch(e){}
 }
 
-async function search() {
-  const q = document.getElementById('searchInput').value.trim();
-  if (!q) return;
-  const data = await api('/api/search?q=' + encodeURIComponent(q));
-  if (!data) return;
-  const div = document.getElementById('searchResults');
-  let html = '<h3 style="margin-bottom:12px">Results for "' + esc(q) + '"</h3>';
-  if (data.docs && data.docs.length) {
-    html += '<h4 style="color:var(--text2);margin-bottom:8px">Services</h4>';
-    html += data.docs.map(d =>
-      '<div class="card" data-service="' + esc(d.serviceName) + '" onclick="clickCard(this)" style="cursor:pointer">' +
-      '<h3>' + esc(d.serviceName) + '</h3>' +
-      '<div class="preview">' + esc(d.content.slice(0, 150).replace(/\\n/g, ' ')) + '...</div>' +
-      '</div>'
-    ).join('');
-  }
-  if (data.notes && data.notes.length) {
-    html += '<h4 style="color:var(--text2);margin:12px 0 8px">Notes</h4>';
-    html += data.notes.map(n =>
-      '<div class="card"><span class="note-type type-' + esc(n.type) + '">' + esc(n.type) + '</span><strong>' + esc(n.topic) + '</strong>' +
-      '<div style="font-size:14px;margin-top:4px">' + esc(n.content.slice(0, 150)) + '</div></div>'
-    ).join('');
-  }
-  var flows = await api('/api/flows');
-  var flowMatches = [];
-  if (flows && flows.length) {
-    flowMatches = flows.filter(function(f){ return (f.flowName||'').toLowerCase().indexOf(q) >= 0 || (f.summary||'').toLowerCase().indexOf(q) >= 0 || (f.keywords||[]).some(function(k){return k.toLowerCase().indexOf(q)>=0}) || (f.serviceName||'').toLowerCase().indexOf(q) >= 0; });
-    if (flowMatches.length) {
-      html += '<h4 style="color:var(--text2);margin:12px 0 8px">Flows (' + flowMatches.length + ')</h4>';
-      html += flowMatches.slice(0,10).map(function(f){
-        return '<div class="card"><span class="note-type type-integration">' + esc(f.flowType) + '</span><strong>' + esc(f.flowName) + '</strong>' +
-          ' <span style="font-size:12px;color:var(--text2)">(' + esc(f.serviceName) + ')</span>' +
-          '<div style="font-size:14px;margin-top:4px">' + esc(f.summary||'') + '</div></div>';
-      }).join('');
-    }
-  }
-  if (!data.docs?.length && !data.notes?.length && flowMatches.length === 0) {
-    html += '<div class="empty">No results found.</div>';
-  }
-  div.innerHTML = html;
-  div.style.display = 'block';
+async function addNote(){
+  var type=document.getElementById('noteType').value,topic=document.getElementById('noteTopic').value.trim(),content=document.getElementById('noteContent').value.trim(),context=document.getElementById('noteContext').value.trim(),tags=document.getElementById('noteTags').value.split(',').map(function(t){return t.trim()}).filter(Boolean);
+  if(!topic||!content)return;
+  var r=await fetch('/api/note',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type,topic,content,context,tags})});
+  if(r.ok){document.getElementById('noteFeedback').textContent='✓ Saved!';['noteTopic','noteContent','noteContext','noteTags'].forEach(function(id){document.getElementById(id).value='';});setTimeout(function(){document.getElementById('noteFeedback').textContent='';},2000);}
 }
 
-async function addNote() {
-  const type = document.getElementById('noteType').value;
-  const topic = document.getElementById('noteTopic').value.trim();
-  const content = document.getElementById('noteContent').value.trim();
-  const context = document.getElementById('noteContext').value.trim();
-  const tags = document.getElementById('noteTags').value.split(',').map(t => t.trim()).filter(Boolean);
-  if (!topic || !content) return;
-
-  const r = await fetch('/api/note', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ type, topic, content, context, tags })
-  });
-  if (r.ok) {
-    document.getElementById('noteFeedback').textContent = '✓ Saved!';
-    document.getElementById('noteTopic').value = '';
-    document.getElementById('noteContent').value = '';
-    document.getElementById('noteContext').value = '';
-    document.getElementById('noteTags').value = '';
-    setTimeout(() => document.getElementById('noteFeedback').textContent = '', 2000);
-  }
-}
-
-function showPanel(name, evt) {
-  var tabs = ['services','flows','notes','addNote'];
-  document.querySelectorAll('.tab').forEach((t, i) => {
-    t.classList.toggle('active', i === tabs.indexOf(name));
-  });
-  document.getElementById('servicesPanel').style.display = name === 'services' ? 'block' : 'none';
-  document.getElementById('flowsPanel').style.display = name === 'flows' ? 'block' : 'none';
-  document.getElementById('notesPanel').style.display = name === 'notes' ? 'block' : 'none';
-  document.getElementById('addNotePanel').style.display = name === 'addNote' ? 'block' : 'none';
-  document.getElementById('searchBar').style.display = (name === 'services' || name === 'flows') && !currentService ? 'flex' : 'none';
-  document.getElementById('searchResults').style.display = 'none';
-  if (name === 'notes') loadNotes();
-  if (name === 'flows') loadFlows();
-}
-
-load();
+init();
 </script>
 </body>
 </html>`;
