@@ -8,6 +8,7 @@ export async function startUIServer(port: number, dbPath: string) {
 
   const server = Bun.serve({
     port,
+    hostname: "127.0.0.1",
     async fetch(req: Request): Promise<Response> {
       const url = new URL(req.url);
 
@@ -104,6 +105,7 @@ function renderHomePage(): string {
 <title>Codebase Wiki</title>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
 <script>mermaid.initialize({startOnLoad:false,theme:'dark',securityLevel:'loose'});</script>
 <style>
 :root {
@@ -277,12 +279,8 @@ async function loadService(name) {
     return;
   }
   var html = '<div class="service-content"><a href="?" style="font-size:13px">← Back to all services</a><br><br>';
-  if (typeof marked !== 'undefined') {
-    html += marked.parse(doc.content);
-  } else {
-    html += '<pre>' + esc(doc.content) + '</pre>';
-  }
-  html += '</div>';
+  var raw = typeof marked !== 'undefined' ? marked.parse(doc.content) : '<pre>' + esc(doc.content) + '</pre>';
+  html += (typeof DOMPurify !== 'undefined' ? DOMPurify.sanitize(raw) : esc(raw)) + '</div>';
   p.innerHTML = html;
   // Fix mermaid blocks: marked wraps them in <code>, mermaid needs <pre class="mermaid">
   var blocks = p.querySelectorAll('code.language-mermaid');
@@ -315,7 +313,7 @@ async function loadFlows() {
       (f.keywords && f.keywords.length ? '<div style="margin-top:4px">' + f.keywords.map(function(k){return '<span class="tag">'+esc(k)+'</span>'}).join('') + '</div>' : '') +
       (f.linkedServices && f.linkedServices.length ? '<div style="margin-top:4px;font-size:12px;color:var(--text2)">Linked: ' + f.linkedServices.map(function(s){return '<span class="tag">'+esc(s)+'</span>'}).join(' ') + '</div>' : '') +
       '<div class="flow-content" style="display:none;margin-top:12px;padding:12px;background:var(--bg);border-radius:6px;overflow-x:auto">' +
-        (typeof marked !== 'undefined' ? marked.parse(f.content||'') : '<pre>'+esc(f.content||'')+'</pre>') +
+        (typeof marked !== 'undefined' ? (typeof DOMPurify !== 'undefined' ? DOMPurify.sanitize(marked.parse(f.content||'')) : marked.parse(f.content||'')) : '<pre>'+esc(f.content||'')+'</pre>') +
       '</div>' +
     '</div>';
   }).join('');
@@ -376,18 +374,19 @@ async function search() {
     ).join('');
   }
   var flows = await api('/api/flows');
+  var flowMatches = [];
   if (flows && flows.length) {
-    var matches = flows.filter(function(f){ return (f.flowName||'').toLowerCase().indexOf(q) >= 0 || (f.summary||'').toLowerCase().indexOf(q) >= 0 || (f.keywords||[]).some(function(k){return k.toLowerCase().indexOf(q)>=0}) || (f.serviceName||'').toLowerCase().indexOf(q) >= 0; });
-    if (matches.length) {
-      html += '<h4 style="color:var(--text2);margin:12px 0 8px">Flows (' + matches.length + ')</h4>';
-      html += matches.slice(0,10).map(function(f){
+    flowMatches = flows.filter(function(f){ return (f.flowName||'').toLowerCase().indexOf(q) >= 0 || (f.summary||'').toLowerCase().indexOf(q) >= 0 || (f.keywords||[]).some(function(k){return k.toLowerCase().indexOf(q)>=0}) || (f.serviceName||'').toLowerCase().indexOf(q) >= 0; });
+    if (flowMatches.length) {
+      html += '<h4 style="color:var(--text2);margin:12px 0 8px">Flows (' + flowMatches.length + ')</h4>';
+      html += flowMatches.slice(0,10).map(function(f){
         return '<div class="card"><span class="note-type type-integration">' + esc(f.flowType) + '</span><strong>' + esc(f.flowName) + '</strong>' +
           ' <span style="font-size:12px;color:var(--text2)">(' + esc(f.serviceName) + ')</span>' +
           '<div style="font-size:14px;margin-top:4px">' + esc(f.summary||'') + '</div></div>';
       }).join('');
     }
   }
-  if (!data.docs?.length && !data.notes?.length && !(flows&&matches&&matches.length)) {
+  if (!data.docs?.length && !data.notes?.length && flowMatches.length === 0) {
     html += '<div class="empty">No results found.</div>';
   }
   div.innerHTML = html;

@@ -388,7 +388,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<st
 
     case "wiki_graph_impact": {
       const svcId = args.service_id as string;
-      const depth = (args.depth as number) || 2;
+      const depth = Math.min((args.depth as number) || 2, 10);
       const impact = await client.graphImpact(svcId, depth);
       return JSON.stringify({
         downstream: impact.downstream.length + " nodes",
