@@ -10,8 +10,10 @@
   },
   "files": [
     "dist",
+    "bin",
     "skills",
     "commands",
+    "rules",
     "README.md"
   ],
   "scripts": {

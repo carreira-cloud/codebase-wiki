@@ -127,19 +127,24 @@ program
     const openCodeDir = join(rootPath, ".opencode");
     const skillsDir = join(openCodeDir, "skills");
     const commandsDir = join(openCodeDir, "commands");
+    const rulesDir = join(openCodeDir, "rules");
 
     mkdirSync(skillsDir, { recursive: true });
     mkdirSync(commandsDir, { recursive: true });
+    mkdirSync(rulesDir, { recursive: true });
 
     const srcSkills = join(__dirname, "..", "skills");
     const srcCommands = join(__dirname, "..", "commands");
+    const srcRules = join(__dirname, "..", "rules");
 
     if (existsSync(srcSkills)) copyDir(srcSkills, skillsDir);
     if (existsSync(srcCommands)) copyDir(srcCommands, commandsDir);
+    if (existsSync(srcRules)) copyDir(srcRules, rulesDir);
 
-    console.log("\n✔ OpenCode skills and commands installed!");
-    console.log("   Skills: .opencode/skills/architectural-planning/");
+    console.log("\n✔ OpenCode skills, commands, and rules installed!");
+    console.log("   Skills: .opencode/skills/architectural-planning/, contextual-debugging/");
     console.log("   Commands: .opencode/commands/wiki.md");
+    console.log("   Rules: .opencode/rules/codebase_wiki_rules.md");
     console.log("\nNext steps:");
     console.log("   1. Start MCP server:  codebase-wiki start-mcp");
     console.log("   2. Browse the UI:     codebase-wiki serve");
