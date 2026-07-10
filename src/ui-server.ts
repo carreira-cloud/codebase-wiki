@@ -284,7 +284,14 @@ async function loadService(name) {
   }
   html += '</div>';
   p.innerHTML = html;
-  if (typeof mermaid !== 'undefined') { try { mermaid.run({querySelector:'.service-content .mermaid'}); } catch(e) {} }
+  // Fix mermaid blocks: marked wraps them in <code>, mermaid needs <pre class="mermaid">
+  var blocks = p.querySelectorAll('code.language-mermaid');
+  blocks.forEach(function(b) {
+    var pre = b.parentElement;
+    pre.className = 'mermaid';
+    pre.innerHTML = b.textContent;
+  });
+  if (typeof mermaid !== 'undefined') { try { mermaid.run({querySelector:'.mermaid'}); } catch(e) {} }
 }
 
 function toggleFlow(el) {
@@ -312,7 +319,14 @@ async function loadFlows() {
       '</div>' +
     '</div>';
   }).join('');
-  setTimeout(function(){ if(typeof mermaid!=='undefined') mermaid.run(); }, 100);
+  // Fix and render mermaid blocks in flows
+  var blocks = p.querySelectorAll('code.language-mermaid');
+  blocks.forEach(function(b) {
+    var pre = b.parentElement;
+    pre.className = 'mermaid';
+    pre.innerHTML = b.textContent;
+  });
+  if (typeof mermaid !== 'undefined') { try { mermaid.run({querySelector:'#flowsPanel .mermaid'}); } catch(e) {} }
 }
 
 function getFlowClass(type) {
