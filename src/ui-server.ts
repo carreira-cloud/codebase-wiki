@@ -287,6 +287,11 @@ async function loadService(name) {
   if (typeof mermaid !== 'undefined') { try { mermaid.run({querySelector:'.service-content .mermaid'}); } catch(e) {} }
 }
 
+function toggleFlow(el) {
+  var content = el.querySelector('.flow-content');
+  if (content) content.style.display = content.style.display === 'none' ? 'block' : 'none';
+}
+
 async function loadFlows() {
   var flows = await api('/api/flows');
   var p = document.getElementById('flowsPanel');
@@ -295,8 +300,8 @@ async function loadFlows() {
     return;
   }
   p.innerHTML = flows.map(function(f) {
-    var typeClass = 'type-' + (f.flowType === 'happy_path' ? 'gotcha' : f.flowType === 'error_path' ? 'gotcha' : f.flowType === 'recovery' ? 'integration' : f.flowType === 'edge_case' ? 'convention' : 'tip');
-    return '<div class="card" onclick="this.querySelector(\'.flow-content\').style.display=this.querySelector(\'.flow-content\').style.display===\'none\'?\'block\':\'none\'" style="cursor:pointer">' +
+    var typeClass = getFlowClass(f.flowType);
+    return '<div class="card" onclick="toggleFlow(this)" style="cursor:pointer">' +
       '<span class="note-type ' + typeClass + '">' + esc(f.flowType || '') + '</span>' +
       '<strong>' + esc(f.flowName) + '</strong>' +
       '<div class="meta" style="margin-top:4px">' + esc(f.serviceName) + ' | ' + esc(f.summary || '') + '</div>' +
@@ -308,6 +313,11 @@ async function loadFlows() {
     '</div>';
   }).join('');
   setTimeout(function(){ if(typeof mermaid!=='undefined') mermaid.run(); }, 100);
+}
+
+function getFlowClass(type) {
+  var map = { happy_path:'integrat', error_path:'gotcha', recovery:'integrat', edge_case:'convent', full:'pattern' };
+  return 'type-' + (map[type] || 'gotcha');
 }
 
 async function loadNotes() {
