@@ -66,14 +66,60 @@ program
 
 program
   .command("discover")
-  .description("Full auto-discovery: scan repo, extract APIs/models/events, build graph, index flows")
-  .action(async () => {
+  .description("Full auto-discovery: scan repo, extract APIs/models/events, build graph")
+  .option("--llm", "Enable LLM flow discovery after AST scan (generates sequence diagrams)")
+  .action(async (options: { llm?: boolean }) => {
     const rootPath = process.cwd();
     const dbPath = join(rootPath, ".codebase-wiki/rag_db");
     console.log("\n🔍 Full discovery scan...\n");
     const result = await discoverServices(rootPath, dbPath);
     console.log(`\n✔ Graph built: ${result.nodes} nodes, ${result.edges} edges`);
-    console.log(`   ${result.services} services, ${result.apis} APIs, ${result.models} models, ${result.events} events\n`);
+    console.log(`   ${result.services} services, ${result.apis} APIs, ${result.models} models, ${result.events} events`);
+
+    if (options.llm) {
+      console.log("\n🧠 LLM Flow Discovery...\n");
+      const client = getClient(dbPath);
+      await client.connect();
+      const { nodes } = await client.loadGraph();
+      const services = nodes.filter(n => n.type === "Service");
+
+      for (const svc of services) {
+        const svcName = svc.data.name as string;
+        console.log(`   📝 ${svcName}...`);
+
+        // Gather context: APIs + models for this service
+        const svcApis = nodes.filter(n => n.type === "API" && (n.data.service as string) === svcName);
+        const svcModels = nodes.filter(n => n.type === "Model" && (n.data.service as string) === svcName);
+        const svcEvents = nodes.filter(n => n.type === "Event" && (n.data.service as string) === svcName);
+
+        const context = `Service: ${svcName}
+APIs:
+${svcApis.map(a => `- ${a.data.method} ${a.data.path} (${a.data.fileRef})`).join("\n").slice(0, 2000)}
+
+Models:
+${svcModels.map(m => `- ${m.data.name} (${m.data.fileRef})`).join("\n").slice(0, 1500)}
+
+${svcEvents.length > 0 ? `Events:\n${svcEvents.map(e => `- ${e.data.direction} ${e.data.name} (${e.data.fileRef})`).join("\n").slice(0, 1000)}` : ""}
+
+Based on this structure, generate ALL major flows for this service.
+For each flow, produce:
+1. Name + type (happy_path, error_path, edge_case, recovery)
+2. Brief summary
+3. 3-7 comma-separated keywords
+4. Comma-separated linked services
+5. A Mermaid sequence diagram showing the flow with ALL steps`;
+
+        try {
+          const flowNames = await discoverFlowsWithLLM(svcName, context, dbPath, svc.data.path as string);
+          console.log(`      ${flowNames} flows indexed`);
+        } catch (e) {
+          console.log(`      ⚠ ${String(e).slice(0, 80)}`);
+        }
+      }
+      console.log(`\n✔ Flow discovery complete\n`);
+    } else {
+      console.log(`\n   (use --llm to enable automatic flow discovery)\n`);
+    }
   });
 
 program
@@ -220,6 +266,53 @@ function copyDir(src: string, dest: string): void {
       copyFileSync(srcPath, destPath);
     }
   }
+}
+
+async function discoverFlowsWithLLM(svcName: string, context: string, dbPath: string, svcPath: string): Promise<number> {
+  const url = "http://192.168.100.207:8080/v1/chat/completions";
+  const body = JSON.stringify({
+    model: "Qwen_Qwen3.6-35B-A3B-Q4_K_M.gguf",
+    messages: [
+      { role: "system", content: `You are a Principal Software Architect analyzing a service to discover its workflows.
+For each flow, output a JSON object (one per line, no wrapping array):
+{"name":"Flow Name","type":"happy_path|error_path|edge_case|recovery","summary":"one line","keywords":"kw1,kw2,kw3","linked":"svc1,svc2","content":"## Flow Name\\n\\nSummary\\n\\n\`\`\`mermaid\\nsequenceDiagram\\n...\\n\`\`\`"}
+Output ONLY valid JSON lines. No markdown, no explanations.` },
+      { role: "user", content: context },
+    ],
+    temperature: 0.2, max_tokens: 4096,
+  });
+
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: "Bearer sk-no-key-required" },
+    body, signal: AbortSignal.timeout(120000),
+  });
+
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  const data = await resp.json() as { choices?: { message?: { content?: string } }[] };
+  const text = data.choices?.[0]?.message?.content || "";
+
+  const client = getClient(dbPath);
+  await client.connect();
+  let count = 0;
+
+  for (const line of text.split("\n")) {
+    try {
+      const flow = JSON.parse(line.trim());
+      if (!flow.name || !flow.content) continue;
+      const id = `${svcName}_${flow.name}`;
+      await client.addFlow({
+        id, serviceName: svcName, servicePath: svcPath,
+        flowName: flow.name, summary: flow.summary || "",
+        keywords: (flow.keywords || "").split(",").map((k: string) => k.trim()).filter(Boolean),
+        linkedServices: (flow.linked || "").split(",").map((s: string) => s.trim()).filter(Boolean),
+        flowType: flow.type || "happy_path", content: flow.content, indexedAt: Date.now(),
+      });
+      count++;
+    } catch { /* skip invalid JSON lines */ }
+  }
+
+  return count;
 }
 
 program.parse();
