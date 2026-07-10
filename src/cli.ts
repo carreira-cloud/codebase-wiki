@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { Command } from "commander";
-import { existsSync, mkdirSync, readdirSync, statSync, copyFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, statSync, copyFileSync, watch } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
@@ -91,10 +91,9 @@ program
     let timer: ReturnType<typeof setTimeout> | null = null;
     let changedFiles = new Set<string>();
 
-    // Simple polling watcher (no chokidar dependency needed)
-    const { watch } = require("node:fs") as typeof import("node:fs");
+    // Simple polling watcher
     try {
-      const watcher = watch(rootPath, { recursive: true }, (_event, filename) => {
+      const watcher = watch(rootPath, { recursive: true }, (_event: string, filename: string | null) => {
         if (!filename || filename.includes("node_modules") || filename.includes(".git")) return;
         if (!/\.(go|ts|tsx|kt|yaml|yml)$/.test(filename)) return;
         changedFiles.add(filename);

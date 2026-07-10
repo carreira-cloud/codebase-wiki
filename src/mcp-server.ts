@@ -267,7 +267,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<st
   switch (name) {
     case "wiki_index": {
       const doc: WikiDoc = {
-        id: Buffer.from(args.service_name as string).toString("hex").slice(0, 12),
+        id: args.service_name as string,
         serviceName: args.service_name as string,
         servicePath: (args.service_path as string) || "",
         language: (args.language as string) || "unknown",
@@ -310,7 +310,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<st
     }
 
     case "wiki_note": {
-      const id = Buffer.from(`${args.topic}_${Date.now()}`).toString("hex").slice(0, 12);
+      const id = `${args.topic}_${Date.now()}`;
       await client.addNote({
         id,
         type: (args.type as WikiNote["type"]) || "tip",
@@ -346,7 +346,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<st
     }
 
     case "wiki_flow_index": {
-      const id = Buffer.from(`${args.service_name}_${args.flow_name}`).toString("hex").slice(0, 12);
+      const id = `${args.service_name}_${args.flow_name}`;
       await client.addFlow({
         id, serviceName: args.service_name as string, servicePath: (args.service_path as string) || "",
         flowName: args.flow_name as string, summary: (args.summary as string) || "",

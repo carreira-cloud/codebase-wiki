@@ -61,7 +61,7 @@ export class LanceDBClient {
       (r.content as string)?.toLowerCase().includes(q)
     );
 
-    return matches.slice(0, 10).map(r => this.rowToDoc(r));
+    return matches.slice(0, 15).map(r => this.rowToDoc(r));
   }
 
   async getDoc(serviceName: string): Promise<WikiDoc | null> {
@@ -156,10 +156,10 @@ export class LanceDBClient {
   }
 
   async saveGraph(nodes: GraphNode[], edges: GraphEdge[]): Promise<void> {
-    const np = this.tablePath("nodes");
-    const ep = this.tablePath("edges");
-    writeFileSync(np, JSON.stringify(nodes), "utf-8");
-    writeFileSync(ep, JSON.stringify(edges), "utf-8");
+    return this.withLock("graph", async () => {
+      writeFileSync(this.tablePath("nodes"), JSON.stringify(nodes), "utf-8");
+      writeFileSync(this.tablePath("edges"), JSON.stringify(edges), "utf-8");
+    });
   }
 
   async loadGraph(): Promise<{ nodes: GraphNode[]; edges: GraphEdge[] }> {
@@ -282,7 +282,7 @@ export class LanceDBClient {
       ((r.tags as string) || "").toLowerCase().includes(q) ||
       (r.context as string)?.toLowerCase().includes(q)
     );
-    return matches.slice(0, 10).map(r => ({
+    return matches.slice(0, 15).map(r => ({
       id: r.id as string,
       type: (r.type as WikiNote["type"]) || "tip",
       topic: r.topic as string,
@@ -316,11 +316,8 @@ export class LanceDBClient {
   private readTable(name: string): Row[] {
     const p = this.tablePath(name);
     if (!existsSync(p)) return [];
-    try {
-      return JSON.parse(readFileSync(p, "utf-8"));
-    } catch {
-      return [];
-    }
+    try { return JSON.parse(readFileSync(p, "utf-8")); }
+    catch { console.error(`[codebase-wiki] corrupted table: ${p}`); return []; }
   }
 
   private rowToDoc(r: Row): WikiDoc {

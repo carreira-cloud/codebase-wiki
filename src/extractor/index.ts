@@ -1,12 +1,12 @@
 import { parseGoService, extractGoDeps } from "../parser/go-parser";
 import { getClient } from "../lancedb/client";
-import type { ServiceAnalysis, GraphNode, GraphEdge } from "../types";
+import { readdirSync, statSync } from "node:fs";
+import { join, basename } from "node:path";
+import type { GraphNode, GraphEdge } from "../types";
 
 export async function discoverServices(rootPath: string, dbPath: string) {
   const client = getClient(dbPath);
   await client.connect();
-  const { readdirSync, statSync } = require("node:fs") as typeof import("node:fs");
-  const { join, basename } = require("node:path") as typeof import("node:path");
 
   const allNodes: GraphNode[] = [];
   const allEdges: GraphEdge[] = [];
@@ -93,7 +93,7 @@ export async function discoverServices(rootPath: string, dbPath: string) {
 
     // Dependency edges
     for (const dep of deps) {
-      const depSvc = services.find(s => dep.includes(basename(s)));
+      const depSvc = services.find(s => basename(s) === basename(dep));
       if (depSvc && basename(depSvc) !== svcName) {
         allEdges.push({ from: svcId, to: `service:${basename(depSvc)}`, type: "DEPENDS_ON" });
       }

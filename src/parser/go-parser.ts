@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
 import type { ServiceAnalysis } from "../types";
 
 export function parseGoService(svcPath: string, svcName: string): ServiceAnalysis {
@@ -6,9 +7,6 @@ export function parseGoService(svcPath: string, svcName: string): ServiceAnalysi
     serviceName: svcName, servicePath: svcPath, language: "go",
     apis: [], models: [], events: [], dependencies: [],
   };
-
-  const { readdirSync, statSync } = require("node:fs") as typeof import("node:fs");
-  const { join } = require("node:path") as typeof import("node:path");
 
   function scanDir(dir: string, depth: number = 0) {
     if (depth > 5) return;
@@ -80,7 +78,6 @@ export function parseGoService(svcPath: string, svcName: string): ServiceAnalysi
 }
 
 export function extractGoDeps(svcPath: string): string[] {
-  const { join } = require("node:path") as typeof import("node:path");
   const modPath = join(svcPath, "go.mod");
   try {
     const content = readFileSync(modPath, "utf-8");
