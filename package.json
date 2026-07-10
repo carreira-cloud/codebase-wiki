@@ -1,0 +1,55 @@
+{
+  "name": "@carreira-cloud/codebase-wiki",
+  "version": "0.1.0",
+  "description": "Architectural knowledge base with MCP interface for AI agents. Agents discover services, generate documentation, and index it for semantic search.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "codebase-wiki": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "skills",
+    "commands",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "declarations": "tsc --emitDeclarationOnly --outDir dist",
+    "test": "bun test",
+    "prepublishOnly": "npm run build && npm test",
+    "start": "node dist/cli.js"
+  },
+  "keywords": [
+    "codebase",
+    "architecture",
+    "wiki",
+    "rag",
+    "lancedb",
+    "monorepo",
+    "ai-agent",
+    "opencode",
+    "claude-code",
+    "mcp",
+    "developer-tools",
+    "code-search"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/carreira-cloud/codebase-wiki"
+  },
+  "author": "Bruno Carreira <bruno@carreira.cloud>",
+  "license": "MIT",
+  "dependencies": {
+    "commander": "^12.0.0"
+  },
+  "peerDependencies": {
+    "typescript": ">=5.0.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.0.0"
+  }
+}

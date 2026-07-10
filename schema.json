@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/carreira-cloud/codebase-wiki/main/schema.json",
+  "title": "Codebase Wiki Configuration",
+  "type": "object",
+  "properties": {
+    "version": { "type": "integer", "default": 1 },
+    "project": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "type": { "enum": ["monorepo", "single-package", "auto"], "default": "auto" },
+        "root": { "type": "string", "default": "." }
+      }
+    },
+    "discovery": {
+      "type": "object",
+      "properties": {
+        "include": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["**/*"]
+        },
+        "exclude": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [
+            "**/node_modules/**",
+            "**/dist/**",
+            "**/.git/**",
+            "**/*.test.*",
+            "**/*.spec.*",
+            "**/vendor/**",
+            "**/__pycache__/**",
+            "**/.venv/**",
+            "**/target/**"
+          ]
+        },
+        "maxFileSizeKb": { "type": "integer", "default": 500 }
+      }
+    },
+    "vectorStore": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "default": "./.codebase-wiki/rag_db" },
+        "embedding": {
+          "type": "object",
+          "properties": {
+            "provider": { "enum": ["ollama", "openai", "custom"], "default": "ollama" },
+            "model": { "type": "string", "default": "mxbai-embed-large" },
+            "baseUrl": { "type": "string" },
+            "apiKey": { "type": "string" }
+          }
+        }
+      }
+    },
+    "skills": {
+      "type": "object",
+      "properties": {
+        "architecturalPlanning": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean", "default": true },
+            "minSimilarity": { "type": "number", "default": 0.75 }
+          }
+        },
+        "contextualDebugging": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean", "default": true },
+            "graphDepth": { "type": "integer", "default": 3 },
+            "recentChangesDays": { "type": "integer", "default": 30 }
+          }
+        }
+      }
+    }
+  }
+}

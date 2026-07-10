@@ -1,0 +1,263 @@
+import { join } from "node:path";
+import type { MCPRequest, MCPToolResponse, MCPListToolsResponse, WikiDoc, WikiNote } from "./types";
+import { getClient } from "./lancedb/client";
+
+const DEFAULT_DB_PATH = ".codebase-wiki/rag_db";
+
+const TOOLS = [
+  {
+    name: "wiki_index",
+    description: "Index an LLM-generated architectural document for a service into the knowledge base",
+    inputSchema: {
+      type: "object",
+      properties: {
+        service_name: { type: "string", description: "Name of the service/package" },
+        service_path: { type: "string", description: "Relative path within the repository" },
+        language: { type: "string", description: "Primary language (go, typescript, python, etc.)" },
+        content: { type: "string", description: "Full markdown architectural documentation" },
+        sections: {
+          type: "object",
+          description: "Key-value of section names to their content (overview, architecture, dataModel, apiEndpoints, dataFlow, integrationPoints, errorHandling, security, configuration)",
+        },
+      },
+      required: ["service_name", "content"],
+    },
+  },
+  {
+    name: "wiki_search",
+    description: "Search indexed architectural documentation by keyword or concept",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Search query (service name, concept, keyword)" },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "wiki_get",
+    description: "Retrieve full architectural documentation for a specific service",
+    inputSchema: {
+      type: "object",
+      properties: {
+        service_name: { type: "string", description: "Exact service name to retrieve" },
+      },
+      required: ["service_name"],
+    },
+  },
+  {
+    name: "wiki_list",
+    description: "List all services with indexed architectural documentation",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+  },
+  {
+    name: "wiki_delete",
+    description: "Remove a service's documentation from the knowledge base",
+    inputSchema: {
+      type: "object",
+      properties: {
+        service_name: { type: "string" },
+      },
+      required: ["service_name"],
+    },
+  },
+  {
+    name: "wiki_stats",
+    description: "Show knowledge base statistics (service count, total content size, notes count)",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+  },
+  {
+    name: "wiki_note",
+    description: "Store a self-learning note — when the agent discovers an important pattern, gotcha, integration detail, convention, decision, or tip during its work",
+    inputSchema: {
+      type: "object",
+      properties: {
+        type: { type: "string", description: "Note type: pattern, gotcha, integration, convention, decision, or tip" },
+        topic: { type: "string", description: "Short title summarizing the discovery" },
+        content: { type: "string", description: "What was discovered and why it matters" },
+        context: { type: "string", description: "Where was this discovered (file paths, service, scenario)" },
+        tags: { type: "string", description: "Comma-separated tags for discoverability" },
+      },
+      required: ["type", "topic", "content"],
+    },
+  },
+  {
+    name: "wiki_notes_search",
+    description: "Search self-learning notes by keyword — find patterns, gotchas, and conventions discovered by agents",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Search across topic, content, tags, and context" },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "wiki_notes_list",
+    description: "List all self-learning notes, optionally filtered by type",
+    inputSchema: {
+      type: "object",
+      properties: {
+        type: { type: "string", description: "Filter by note type (pattern, gotcha, integration, convention, decision, tip)" },
+      },
+    },
+  },
+];
+
+export async function handleMCPRequest(request: string): Promise<string> {
+  let req: MCPRequest;
+  try {
+    req = JSON.parse(request);
+  } catch {
+    return JSON.stringify({
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32700, message: "Parse error" },
+    });
+  }
+
+  if (req.method === "tools/list") {
+    const resp: MCPListToolsResponse = {
+      jsonrpc: "2.0",
+      id: req.id,
+      result: { tools: TOOLS },
+    };
+    return JSON.stringify(resp);
+  }
+
+  if (req.method === "tools/call") {
+    const toolName = req.params?.name;
+    const args = req.params?.arguments || {};
+
+    try {
+      const result = await callTool(toolName || "", args);
+      const resp: MCPToolResponse = {
+        jsonrpc: "2.0",
+        id: req.id,
+        result: { content: [{ type: "text", text: result }] },
+      };
+      return JSON.stringify(resp);
+    } catch (err) {
+      return JSON.stringify({
+        jsonrpc: "2.0",
+        id: req.id,
+        error: { code: -32000, message: String(err) },
+      });
+    }
+  }
+
+  if (req.method === "initialize") {
+    return JSON.stringify({
+      jsonrpc: "2.0",
+      id: req.id,
+      result: {
+        protocolVersion: "2024-11-05",
+        capabilities: { tools: {} },
+        serverInfo: { name: "codebase-wiki", version: "0.1.0" },
+      },
+    });
+  }
+
+  return JSON.stringify({
+    jsonrpc: "2.0",
+    id: req.id,
+    error: { code: -32601, message: `Unknown method: ${req.method}` },
+  });
+}
+
+async function callTool(name: string, args: Record<string, unknown>): Promise<string> {
+  const dbPath = (process.env.WIKI_DB_PATH) || join(process.cwd(), DEFAULT_DB_PATH);
+  const client = getClient(dbPath);
+  await client.connect();
+
+  switch (name) {
+    case "wiki_index": {
+      const doc: WikiDoc = {
+        id: Buffer.from(args.service_name as string).toString("hex").slice(0, 12),
+        serviceName: args.service_name as string,
+        servicePath: (args.service_path as string) || "",
+        language: (args.language as string) || "unknown",
+        sections: (args.sections as Record<string, string>) || {},
+        content: args.content as string,
+        indexedAt: Date.now(),
+      };
+      await client.indexDoc(doc);
+      return `Documentation indexed for "${doc.serviceName}" (${Math.floor(doc.content.length / 1000)}K chars)`;
+    }
+
+    case "wiki_search": {
+      const docs = await client.searchDocs(args.query as string);
+      return JSON.stringify(docs.map((d: WikiDoc) => ({
+        name: d.serviceName,
+        path: d.servicePath,
+        preview: d.content.slice(0, 200),
+      })), null, 2);
+    }
+
+    case "wiki_get": {
+      const doc = await client.getDoc(args.service_name as string);
+      if (!doc) return `No documentation found for "${args.service_name}"`;
+      return doc.content;
+    }
+
+    case "wiki_list": {
+      const services = await client.listServices();
+      return JSON.stringify(services, null, 2);
+    }
+
+    case "wiki_delete": {
+      const ok = await client.deleteDoc(args.service_name as string);
+      return ok ? `Deleted "${args.service_name}"` : `"${args.service_name}" not found`;
+    }
+
+    case "wiki_stats": {
+      const stats = await client.stats();
+      return `${stats.services} services indexed, ${Math.floor(stats.totalChars / 1000)}K chars, ${stats.notes} agent notes`;
+    }
+
+    case "wiki_note": {
+      const id = Buffer.from(`${args.topic}_${Date.now()}`).toString("hex").slice(0, 12);
+      await client.addNote({
+        id,
+        type: (args.type as WikiNote["type"]) || "tip",
+        topic: args.topic as string,
+        content: args.content as string,
+        context: (args.context as string) || "",
+        tags: typeof args.tags === "string" ? args.tags.split(",").map(t => t.trim()) : [],
+        authoredBy: "agent",
+        authoredAt: Date.now(),
+      });
+      return `Note stored: [${args.type}] "${args.topic}"`;
+    }
+
+    case "wiki_notes_search": {
+      const notes = await client.searchNotes(args.query as string);
+      return JSON.stringify(notes.map(n => ({
+        type: n.type,
+        topic: n.topic,
+        snippet: n.content.slice(0, 200),
+        context: n.context,
+        tags: n.tags,
+      })), null, 2);
+    }
+
+    case "wiki_notes_list": {
+      const notes = await client.listNotes((args.type as string) || undefined);
+      return JSON.stringify(notes.map(n => ({
+        type: n.type,
+        topic: n.topic,
+        context: n.context,
+        tags: n.tags,
+      })), null, 2);
+    }
+
+    default:
+      throw new Error(`Unknown tool: ${name}`);
+  }
+}
