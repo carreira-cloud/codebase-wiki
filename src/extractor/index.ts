@@ -19,6 +19,7 @@ const MARKERS: Record<string, string> = {
   "mix.exs": "elixir",
   "Package.swift": "swift",
   ".csproj": "csharp",
+  ".sln": "csharp",
 };
 
 const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "build", ".next", "vendor", ".codebase-wiki", "coverage", "__pycache__", ".turbo", ".parcel-cache"]);
@@ -110,6 +111,23 @@ function scanRoutes(filePath: string, rootPath: string): { method: string; path:
     patterns.push([/#\[(get|post|put|delete|patch)\s*\(\s*"([^"]+)"\s*\)/gi, 2, 1]);
     // Rocket: #[get("/path")]
     patterns.push([/#\[(get|post|put|delete|patch)\s*\(\s*"([^"]+)"/gi, 2, 1]);
+  } else if (ext === ".rb") {
+    // Rails/Sinatra: get '/path' do / post '/path' do
+    patterns.push([/(get|post|put|patch|delete|match)\s+['"]([^'"]+)['"]/gi, 2, 1]);
+    // Rails resources: resources :users
+    patterns.push([/resources\s+:(\w+)/g, 1, 0]);
+  } else if (ext === ".cs") {
+    // ASP.NET: [HttpGet("/path")]
+    patterns.push([/\[Http(Get|Post|Put|Patch|Delete|Head|Options)\s*\(\s*"([^"]+)"\s*\)/gi, 2, 1]);
+    // ASP.NET: [Route("/path")]
+    patterns.push([/\[Route\s*\(\s*"([^"]+)"/gi, 1, 0]);
+    // Minimal API: app.MapGet("/path", handler)
+    patterns.push([/(?:app|api)\.Map(Get|Post|Put|Patch|Delete)\s*\(\s*"([^"]+)"/gi, 2, 1]);
+  } else if (ext === ".java") {
+    // Spring Boot: @GetMapping("/path")
+    patterns.push([/@(?:Get|Post|Put|Patch|Delete|Request)Mapping\s*\(\s*"([^"]+)"/g, 1, 0]);
+    // JAX-RS: @Path("/resource") + @GET
+    patterns.push([/@Path\s*\(\s*"([^"]+)"/g, 1, 0]);
   }
 
   for (const [re, pathIdx, methodIdx] of patterns) {
@@ -177,7 +195,7 @@ export async function discoverServices(rootPath: string, dbPath: string) {
           try {
             const st = statSync(full);
             if (st.isDirectory()) { scanDir(full, depth + 1); continue; }
-            if (/\.(ts|tsx|js|jsx|go|kt|py|rs|rb|php|cs)$/i.test(e)) apiRoutes.push(...scanRoutes(full, rootPath));
+            if (/\.(ts|tsx|js|jsx|go|kt|py|rs|rb|cs|java|php)$/i.test(e)) apiRoutes.push(...scanRoutes(full, rootPath));
           } catch { /* skip */ }
         }
       };
