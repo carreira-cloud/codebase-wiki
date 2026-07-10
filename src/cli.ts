@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { Command } from "commander";
-import { existsSync, mkdirSync, readdirSync, statSync, copyFileSync, watch, readFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, statSync, watch, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
@@ -416,16 +416,7 @@ function getLanguagePatterns(language: string): { config: string[]; entry: strin
 }
 
 function copyDir(src: string, dest: string): void {
-  for (const entry of readdirSync(src)) {
-    const srcPath = join(src, entry);
-    const destPath = join(dest, entry);
-    if (statSync(srcPath).isDirectory()) {
-      if (!existsSync(destPath)) mkdirSync(destPath, { recursive: true });
-      copyDir(srcPath, destPath);
-    } else {
-      copyFileSync(srcPath, destPath);
-    }
-  }
+  cpSync(src, dest, { recursive: true });
 }
 
 async function callLLM(systemPrompt: string, userContent: string): Promise<string> {

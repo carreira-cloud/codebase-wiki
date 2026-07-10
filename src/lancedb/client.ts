@@ -2,15 +2,10 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { WikiDoc, WikiNote, WikiFlow, GraphNode, GraphEdge } from "../types";
 
-interface Row {
-  [key: string]: unknown;
-}
-
 let dbInstances = new Map<string, LanceDBClient>();
 
 export class LanceDBClient {
   private dbPath: string;
-  private locks: Map<string, Promise<void>> = new Map();
 
   constructor(dbPath: string) {
     this.dbPath = dbPath;
@@ -20,23 +15,14 @@ export class LanceDBClient {
     if (!existsSync(this.dbPath)) mkdirSync(this.dbPath, { recursive: true });
   }
 
-  private async withLock(table: string, fn: () => Promise<void>): Promise<void> {
-    const prev = this.locks.get(table) || Promise.resolve();
-    const next = prev.then(() => fn());
-    next.finally(() => { if (this.locks.get(table) === next) this.locks.delete(table); });
-    this.locks.set(table, next);
-    return next;
-  }
-
   async indexDoc(doc: WikiDoc): Promise<void> {
-    return this.withLock("docs", async () => {
     const table = this.tablePath("docs");
     const rows = this.readTable("docs");
 
     // Remove existing entry for this service
     const filtered = rows.filter(r => r.id !== doc.id);
 
-    const row: Row = {
+    const row: Record<string, unknown> = {
       id: doc.id,
       service_name: doc.serviceName,
       service_path: doc.servicePath,
@@ -49,7 +35,6 @@ export class LanceDBClient {
 
     filtered.push(row);
     writeFileSync(table, JSON.stringify(filtered), "utf-8");
-    });
   }
 
   async searchDocs(query: string): Promise<WikiDoc[]> {
@@ -80,27 +65,20 @@ export class LanceDBClient {
   }
 
   async deleteDoc(serviceName: string): Promise<boolean> {
-    let deleted = false;
-    await this.withLock("docs", async () => {
     const rows = this.readTable("docs");
     const filtered = rows.filter(r => r.service_name !== serviceName);
-    if (filtered.length === rows.length) return;
-    deleted = true;
+    if (filtered.length === rows.length) return false;
     writeFileSync(this.tablePath("docs"), JSON.stringify(filtered), "utf-8");
-    });
-    return deleted;
+    return true;
   }
 
   async clearAll(): Promise<void> {
     for (const table of ["docs", "flows", "notes", "nodes", "edges"]) {
-      await this.withLock(table, async () => {
-        writeFileSync(this.tablePath(table), "[]", "utf-8");
-      });
+      writeFileSync(this.tablePath(table), "[]", "utf-8");
     }
   }
 
   async addFlow(flow: WikiFlow): Promise<void> {
-    return this.withLock("flows", async () => {
       const table = this.tablePath("flows");
       const flows = this.readTable("flows");
       flows.push({
@@ -117,7 +95,6 @@ export class LanceDBClient {
         indexed_at: flow.indexedAt,
       });
       writeFileSync(table, JSON.stringify(flows), "utf-8");
-    });
   }
 
   async searchFlows(query: string): Promise<WikiFlow[]> {
@@ -167,10 +144,8 @@ export class LanceDBClient {
   }
 
   async saveGraph(nodes: GraphNode[], edges: GraphEdge[]): Promise<void> {
-    return this.withLock("graph", async () => {
-      writeFileSync(this.tablePath("nodes"), JSON.stringify(nodes), "utf-8");
-      writeFileSync(this.tablePath("edges"), JSON.stringify(edges), "utf-8");
-    });
+    writeFileSync(this.tablePath("nodes"), JSON.stringify(nodes), "utf-8");
+    writeFileSync(this.tablePath("edges"), JSON.stringify(edges), "utf-8");
   }
 
   async loadGraph(): Promise<{ nodes: GraphNode[]; edges: GraphEdge[] }> {
@@ -267,7 +242,6 @@ export class LanceDBClient {
   }
 
   async addNote(note: WikiNote): Promise<void> {
-    return this.withLock("notes", async () => {
     const table = this.tablePath("notes");
     const notes = this.readTable("notes");
     notes.push({
@@ -281,7 +255,6 @@ export class LanceDBClient {
       authored_at: note.authoredAt,
     });
     writeFileSync(table, JSON.stringify(notes), "utf-8");
-    });
   }
 
   async searchNotes(query: string): Promise<WikiNote[]> {
@@ -324,14 +297,14 @@ export class LanceDBClient {
     return join(this.dbPath, `${name}.json`);
   }
 
-  private readTable(name: string): Row[] {
+  private readTable(name: string): Record<string, unknown>[] {
     const p = this.tablePath(name);
     if (!existsSync(p)) return [];
     try { return JSON.parse(readFileSync(p, "utf-8")); }
     catch { console.error(`[codebase-wiki] corrupted table: ${p}`); return []; }
   }
 
-  private rowToDoc(r: Row): WikiDoc {
+  private rowToDoc(r: Record<string, unknown>): WikiDoc {
     let sections: Record<string, string> = {};
     try {
       sections = JSON.parse(r.sections as string);
@@ -356,9 +329,4 @@ export function getClient(dbPath: string): LanceDBClient {
     dbInstances.set(dbPath, client);
   }
   return client;
-}
-
-export function resetClient(dbPath?: string): void {
-  if (dbPath) dbInstances.delete(dbPath);
-  else dbInstances.clear();
 }

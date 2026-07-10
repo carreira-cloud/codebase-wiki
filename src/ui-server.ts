@@ -330,7 +330,7 @@ async function loadFlows() {
 }
 
 function getFlowClass(type) {
-  var map = { happy_path:'integrat', error_path:'gotcha', recovery:'integrat', edge_case:'convent', full:'pattern', state_machine:'pattern' };
+  var map = { happy_path:'integration', error_path:'gotcha', recovery:'integration', edge_case:'convention', full:'pattern', state_machine:'pattern' };
   return 'type-' + (map[type] || 'gotcha');
 }
 
