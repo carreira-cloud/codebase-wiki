@@ -98,6 +98,56 @@ export async function startUIServer(port: number, dbPath: string) {
         return json({ flows: all.slice(offset, offset + limit), total: all.length });
       }
 
+      if (url.pathname === "/api/events") {
+        const svc = url.searchParams.get("service") || "";
+        const offset = parseInt(url.searchParams.get("offset") || "0", 10);
+        const limit = parseInt(url.searchParams.get("limit") || "50", 10);
+        const allFlows = await client.listFlows();
+
+        const eventMap = new Map<string, { name: string; emittedBy: string[]; consumedBy: string[] }>();
+        for (const f of allFlows) {
+          for (const e of f.eventsEmitted) {
+            if (!eventMap.has(e)) eventMap.set(e, { name: e, emittedBy: [], consumedBy: [] });
+            eventMap.get(e)!.emittedBy.push(f.serviceName);
+          }
+          for (const e of f.eventsConsumed) {
+            if (!eventMap.has(e)) eventMap.set(e, { name: e, emittedBy: [], consumedBy: [] });
+            eventMap.get(e)!.consumedBy.push(f.serviceName);
+          }
+        }
+
+        let events = [...eventMap.values()].filter(e => {
+          if (!svc) return true;
+          return e.emittedBy.includes(svc) || e.consumedBy.includes(svc);
+        });
+
+        events.sort((a, b) => a.name.localeCompare(b.name));
+        for (const e of events) {
+          e.emittedBy = [...new Set(e.emittedBy)];
+          e.consumedBy = [...new Set(e.consumedBy)];
+        }
+
+        return json({ events: events.slice(offset, offset + limit), total: events.length });
+      }
+
+      if (url.pathname === "/api/apis") {
+        const svc = url.searchParams.get("service") || "";
+        const offset = parseInt(url.searchParams.get("offset") || "0", 10);
+        const limit = parseInt(url.searchParams.get("limit") || "50", 10);
+        const { nodes } = await client.loadGraph();
+        const apiNodes = nodes.filter(n => n.type === "API");
+
+        const apiList = apiNodes.map(n => ({
+          method: n.data.method as string,
+          path: n.data.path as string,
+          service: n.data.service as string,
+          fileRef: n.data.fileRef as string,
+        })).filter(a => !svc || a.service === svc);
+
+        apiList.sort((a, b) => (a.service + a.path).localeCompare(b.service + b.path));
+        return json({ apis: apiList.slice(offset, offset + limit), total: apiList.length });
+      }
+
       return notFound();
     },
     error() {
@@ -228,12 +278,16 @@ header h1 { font-size: 20px; }
   <div class="tabs">
     <div class="tab active" onclick="switchTab('services')">Services</div>
     <div class="tab" onclick="switchTab('flows')">Flows</div>
+    <div class="tab" onclick="switchTab('events')">Events</div>
+    <div class="tab" onclick="switchTab('apis')">APIs</div>
     <div class="tab" onclick="switchTab('notes')">Notes</div>
-    <div class="tab" onclick="switchTab('addNote')">+ Add Note</div>
+    <div class="tab" onclick="switchTab('addNote')">+ Note</div>
   </div>
 
   <div id="servicesPanel"></div>
   <div id="flowsPanel" style="display:none"></div>
+  <div id="eventsPanel" style="display:none"></div>
+  <div id="apisPanel" style="display:none"></div>
   <div id="notesPanel" style="display:none"></div>
   <div id="addNotePanel" style="display:none">
     <div class="note-form">
@@ -283,15 +337,16 @@ function onSvcFilter(v){
 
 function switchTab(name){
   state.tab=name; state.page=0;
-  var tabs=['services','flows','notes','addNote'];
+  var tabs=['services','flows','events','apis','notes','addNote'];
   document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',tabs[i]===name));
-  ['servicesPanel','flowsPanel','notesPanel','addNotePanel'].forEach(id=>document.getElementById(id).style.display='none');
-  var pid=name==='services'?'servicesPanel':name==='flows'?'flowsPanel':name==='notes'?'notesPanel':name==='addNote'?'addNotePanel':'';
-  document.getElementById(pid).style.display='block';
+  ['servicesPanel','flowsPanel','eventsPanel','apisPanel','notesPanel','addNotePanel'].forEach(id=>document.getElementById(id).style.display='none');
+  document.getElementById(name+'Panel').style.display='block';
   document.getElementById('searchBar').style.display=name==='addNote'?'none':'flex';
   document.getElementById('searchResults').style.display='none';
   if(name==='services'&&!state.svc) loadServices();
   if(name==='flows') loadFlows();
+  if(name==='events') loadEvents();
+  if(name==='apis') loadAPIs();
   if(name==='notes') loadNotes();
 }
 
@@ -402,6 +457,52 @@ async function loadNotes(page){
     '<div style="margin-top:6px;font-size:14px">'+esc(n.content.slice(0,300))+'</div>'+
     (n.tags&&n.tags.length?'<div style="margin-top:6px">'+n.tags.map(function(t){return'<span class="tag">'+esc(t)+'</span>'}).join('')+'</div>':'')+'</div>';
   }).join('')+renderPagination(data.total,'loadNotes');
+}
+
+async function loadEvents(page){
+  if(typeof page==='number')state.page=page;
+  var params='?offset='+(state.page*state.limit)+'&limit='+state.limit;
+  if(state.svc)params+='&service='+encodeURIComponent(state.svc);
+  var data=await api('/api/events'+params);
+  var p=document.getElementById('eventsPanel');
+  if(!data||!data.events.length){p.innerHTML='<div class="empty">No events indexed. Run LLM discovery to populate.</div>';return;}
+  p.innerHTML='<div style="margin-bottom:12px;font-size:13px;color:var(--text2)">'+(state.svc?'Events for '+esc(state.svc):'All events across services')+'</div>'+
+    data.events.map(function(e){
+      return'<div class="card">'+
+        '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'+
+        '<code style="font-size:14px;font-weight:600;color:var(--accent)">'+esc(e.name)+'</code>'+
+        (e.emittedBy.length?'<span style="font-size:11px;color:var(--green)">📤 '+e.emittedBy.map(function(s){return'<span class="tag">'+esc(s)+'</span>'}).join(' ')+'</span>':'')+
+        (e.consumedBy.length?'<span style="font-size:11px;color:var(--purple)">📥 '+e.consumedBy.map(function(s){return'<span class="tag" style="background:rgba(163,113,247,0.15);color:var(--purple)">'+esc(s)+'</span>'}).join(' ')+'</span>':'')+
+        '</div></div>';
+    }).join('')+renderPagination(data.total,'loadEvents');
+}
+
+async function loadAPIs(page){
+  if(typeof page==='number')state.page=page;
+  var params='?offset='+(state.page*state.limit)+'&limit='+state.limit;
+  if(state.svc)params+='&service='+encodeURIComponent(state.svc);
+  var data=await api('/api/apis'+params);
+  var p=document.getElementById('apisPanel');
+  if(!data||!data.apis.length){p.innerHTML='<div class="empty">No APIs indexed yet.<br><br>Run <code>codebase-wiki discover</code> to scan the repository.</div>';return;}
+  var services=[...new Set(data.apis.map(function(a){return a.service}))];
+  p.innerHTML='<div style="margin-bottom:12px;font-size:13px;color:var(--text2)">'+data.total+' endpoints across '+services.length+' services</div>';
+  var currentSvc='';
+  for(var i=0;i<data.apis.length;i++){
+    var a=data.apis[i];
+    if(a.service!==currentSvc){
+      if(currentSvc)p.innerHTML+='</div>';
+      currentSvc=a.service;
+      p.innerHTML+='<div style="margin-bottom:16px"><h3 style="font-size:15px;margin-bottom:6px;color:var(--accent)">'+esc(a.service)+'</h3>';
+    }
+    var methodColor={GET:'var(--green)',POST:'var(--accent)',PUT:'var(--orange)',PATCH:'var(--purple)',DELETE:'var(--red)'}[a.method]||'var(--text2)';
+    p.innerHTML+='<div style="padding:4px 0;display:flex;align-items:center;gap:8px;font-size:13px">'+
+      '<span style="display:inline-block;width:48px;text-align:center;font-weight:600;color:'+methodColor+';font-size:11px">'+esc(a.method)+'</span>'+
+      '<code style="color:var(--text)">'+esc(a.path)+'</code>'+
+      (a.fileRef?'<span class="file-ref" style="font-size:10px">'+esc(a.fileRef)+'</span>':'')+
+      '</div>';
+  }
+  if(currentSvc)p.innerHTML+='</div>';
+  p.innerHTML+=renderPagination(data.total,'loadAPIs');
 }
 
 async function doSearch(page){
