@@ -355,7 +355,7 @@ async function loadFlows(page){
   if(!data||!data.flows.length){p.innerHTML='<div class="empty">No flows.</div>';return;}
   p.innerHTML='<div class="filter-bar">'+
     '<select id="flowTypeFilter" onchange="loadFlows(0)" style="margin-right:8px">'+
-    '<option value="">All types</option><option value="happy_path">Happy Path</option><option value="error_path">Error Path</option><option value="edge_case">Edge Case</option><option value="recovery">Recovery</option><option value="state_machine">State Machine</option></select>'+
+    '<option value="">All types</option><option value="happy_path">Happy Path</option><option value="error_path">Error Path</option><option value="edge_case">Edge Case</option><option value="recovery">Recovery</option><option value="state_machine">State Machine</option><option value="saga">Saga</option></select>'+
     '<button class="small" onclick="toggleAllFlows()">Expand All</button></div>'+
     renderFlowCards(data.flows)+renderPagination(data.total,'loadFlows');
   p.querySelectorAll('code.language-mermaid').forEach(function(b){var pr=b.parentElement;pr.className='mermaid';pr.textContent=b.textContent;});
@@ -368,10 +368,16 @@ function renderFlowCards(flows){
     return'<div class="card" onclick="tgl(this)" style="cursor:pointer">'+
       '<span class="note-type '+tc+'">'+esc(f.flowType||'')+'</span>'+
       '<strong>'+esc(f.flowName)+'</strong>'+
+      (f.sagaId?' <span class="tag" style="background:rgba(210,153,29,0.15);color:var(--orange)" title="Part of saga: '+esc(f.sagaId)+'">saga:'+esc(f.sagaId)+'</span>':'')+
       '<div class="meta" style="margin-top:4px">'+esc(f.serviceName)+' | '+esc(f.summary||'')+'</div>'+
       (f.keywords&&f.keywords.length?'<div style="margin-top:4px">'+f.keywords.map(function(k){return'<span class="tag">'+esc(k)+'</span>'}).join('')+'</div>':'')+
       (f.linkedServices&&f.linkedServices.length?'<div style="margin-top:4px;font-size:12px;color:var(--text2)">Linked: '+f.linkedServices.map(function(s){return'<span class="tag">'+esc(s)+'</span>'}).join(' ')+'</div>':'')+
       (f.fileRefs&&f.fileRefs.length?'<div style="margin-top:4px">'+f.fileRefs.map(function(r){return'<span class="file-ref">'+esc(r)+'</span>'}).join(' ')+'</div>':'')+
+      (f.eventsEmitted&&f.eventsEmitted.length||f.eventsConsumed&&f.eventsConsumed.length?
+        '<div style="margin-top:4px;font-size:12px">'+
+        (f.eventsEmitted&&f.eventsEmitted.length?'<span style="color:var(--green)" title="Events emitted">📤'+f.eventsEmitted.map(function(e){return' <code style="font-size:11px;color:var(--green)">'+esc(e)+'</code>'}).join('')+'</span> ':'')+
+        (f.eventsConsumed&&f.eventsConsumed.length?'<span style="color:var(--accent)" title="Events consumed">📥'+f.eventsConsumed.map(function(e){return' <code style="font-size:11px;color:var(--accent)">'+esc(e)+'</code>'}).join('')+'</span> ':'')+
+        '</div>':'')+
       '<div class="flow-content" style="display:none;margin-top:12px;padding:12px;background:var(--bg);border-radius:6px;overflow-x:auto">'+
         (typeof marked!=='undefined'?(typeof DOMPurify!=='undefined'?DOMPurify.sanitize(marked.parse(f.content||'')):marked.parse(f.content||'')):'<pre>'+esc(f.content||'')+'</pre>')+
       '</div></div>';
@@ -381,7 +387,7 @@ function renderFlowCards(flows){
 function tgl(el){var c=el.querySelector('.flow-content');if(c)c.style.display=c.style.display==='none'?'block':'none';}
 function toggleAllFlows(){var all=document.querySelectorAll('.flow-content');var anyHidden=Array.from(all).some(function(c){return c.style.display==='none'});all.forEach(function(c){c.style.display=anyHidden?'block':'none'});}
 
-function getFlowClass(t){var m={happy_path:'integration',error_path:'gotcha',recovery:'integration',edge_case:'convention',full:'pattern',state_machine:'pattern'};return'type-'+(m[t]||'gotcha');}
+function getFlowClass(t){var m={happy_path:'integration',error_path:'gotcha',recovery:'integration',edge_case:'convention',full:'pattern',state_machine:'pattern',saga:'decision'};return'type-'+(m[t]||'gotcha');}
 
 async function loadNotes(page){
   if(typeof page==='number')state.page=page;

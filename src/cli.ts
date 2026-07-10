@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
 import { handleMCPRequest } from "./mcp-server";
 import { getClient } from "./lancedb/client";
+import type { WikiFlow } from "./types";
 import { startUIServer } from "./ui-server";
 import { discoverServices } from "./extractor/index";
 
@@ -133,8 +134,71 @@ program
           } catch (e) {
             console.log(` ⚠ ${String(e).slice(0, 80)}`);
           }
+      }
+      console.log(`\n✔ Deep discovery complete\n`);
+
+      // Post-processing: compose sagas from flows that share saga IDs
+      const allFlows = await client.listFlows();
+      const sagaGroups = new Map<string, WikiFlow[]>();
+      for (const f of allFlows) {
+        if (f.sagaId && f.flowType !== "saga") {
+          if (!sagaGroups.has(f.sagaId)) sagaGroups.set(f.sagaId, []);
+          sagaGroups.get(f.sagaId)!.push(f);
         }
-        console.log(`\n✔ Deep discovery complete\n`);
+      }
+
+      if (sagaGroups.size > 0) {
+        console.log(`\n🔗 Composing ${sagaGroups.size} sagas...\n`);
+        for (const [sagaId, members] of sagaGroups) {
+          if (members.length < 2) continue;
+          const services = [...new Set(members.map(f => f.serviceName))];
+          const allEvents = {
+            emitted: [...new Set(members.flatMap(f => f.eventsEmitted))],
+            consumed: [...new Set(members.flatMap(f => f.eventsConsumed))],
+          };
+
+          const sagaContent = `## Saga: ${sagaId}
+
+### Participating Services
+${services.map(s => `- **${s}**`).join("\n")}
+
+### Event Flow
+${allEvents.emitted.length > 0 ? `**Emitted:** ${allEvents.emitted.map(e => `\`${e}\``).join(", ")}\n` : ""}${allEvents.consumed.length > 0 ? `**Consumed:** ${allEvents.consumed.map(e => `\`${e}\``).join(", ")}\n` : ""}
+
+### Member Flows
+${members.map(f => `- [${f.serviceName}] ${f.flowName} (${f.flowType})`).join("\n")}
+
+### Full Saga Diagram
+\`\`\`mermaid
+sequenceDiagram
+${members.map(f => {
+  const mermaidMatch = f.content.match(/```mermaid\nsequenceDiagram\n([\s\S]*?)```/);
+  if (mermaidMatch) {
+    return `  Note over ${f.serviceName}: ${f.flowName}\n${mermaidMatch[1].split('\n').filter(l => l.trim()).map(l => '  ' + l).join('\n')}`;
+  }
+  return `  Note over ${f.serviceName}: ${f.flowName} (see individual flow)`;
+}).join('\n\n')}
+\`\`\`
+`;
+
+          await client.addFlow({
+            id: `saga_${sagaId}`, serviceName: services[0] || "", servicePath: "",
+            flowName: `Saga: ${sagaId}`,
+            summary: `Saga spanning ${services.length} services: ${services.join(", ")}. ${members.length} flows, ${allEvents.emitted.length} events emitted, ${allEvents.consumed.length} consumed.`,
+            keywords: ["saga", sagaId, ...services],
+            linkedServices: services,
+            flowType: "saga",
+            content: sagaContent,
+            fileRefs: members.flatMap(f => f.fileRefs),
+            eventsEmitted: allEvents.emitted,
+            eventsConsumed: allEvents.consumed,
+            sagaId,
+            indexedAt: Date.now(),
+          });
+          console.log(`   📐 ${sagaId}: ${members.length} flows across ${services.length} services`);
+        }
+        console.log(`\n✔ Saga composition complete\n`);
+      }
       } else {
         console.log(`\n   (use --llm to enable deep LLM discovery: 3-phase per service)\n`);
         console.log(`   (use --reset --llm to clear all data and regenerate)\n`);
@@ -493,17 +557,21 @@ async function phaseGenerateFlows(
   const seqPrompt = `You are a Principal Software Architect. Generate COMPLETE sequence flows for this service — each must show the FULL lifecycle, not a truncated snippet.
 
   For each flow, output a JSON object on its own line:
-  {"name":"Flow Name","flow_type":"happy_path|error_path|edge_case|recovery","summary":"one line","keywords":"kw1,kw2,kw3","linked":"svc1,svc2","file_refs":"src/handler/checkout.go:45,src/service/order.go:120","content":"## Flow Name\\n\\n### Referenced Files\\n- src/handler/checkout.go:45 — validation\\n- src/service/order.go:120 — order creation\\n\\n### Summary\\n...\\n\\n\`\`\`mermaid\\nsequenceDiagram\\n  actor User\\n  participant SVC as ${svcName}\\n  ...\\n\`\`\`"}
+  {"name":"Flow Name","flow_type":"happy_path|error_path|edge_case|recovery","summary":"one line","keywords":"kw1,kw2,kw3","linked":"svc1,svc2","file_refs":"src/handler/checkout.go:45,src/service/order.go:120","events_emitted":"order.created,payment.intent_created","events_consumed":"payment.succeeded,shipping.label_generated","saga_id":"checkout-saga","content":"## Flow Name\\n\\n### Referenced Files\\n- src/handler/checkout.go:45 — validation\\n- src/service/order.go:120 — order creation\\n\\n### Events Emitted\\n- order.created — when order is persisted\\n- payment.intent_created — when payment intent is registered\\n\\n### Events Consumed\\n- payment.succeeded — from payment-microservice\\n\\n### Summary\\n...\\n\\n\`\`\`mermaid\\nsequenceDiagram\\n  actor User\\n  participant SVC as ${svcName}\\n  ...\\n\`\`\`"}
 
   REQUIREMENTS:
   - Generate 3 sequence flows: 1 happy path + 1 error path + 1 edge case or recovery
   - MINIMUM 8 interactions per Mermaid diagram (not just 3-4 steps)
+  - "events_emitted" — comma-separated event names this flow publishes (e.g. "order.created,payment.intent_created")
+  - "events_consumed" — comma-separated event names this flow subscribes to and reacts to
+  - "saga_id" — if this flow is part of a multi-service saga (distributed transaction), assign a saga_id (e.g. "checkout-saga", "order-fulfillment"). All flows in the same saga must share the same saga_id. If standalone, leave empty.
   - "file_refs" MUST contain comma-separated file paths with line numbers, taken from the AST data or source files provided
   - Include accurate file references — use the file paths from the AST (e.g. "handler/checkout.go:45")  
-  - linked services MUST use actual service names from the source code, not invented names
+
+- linked services MUST use actual service names from the source code, not invented names
   - Output ONLY JSON lines (one per flow, no markdown fences, no explanations)`;
 
-  const seqContext = `${serviceInfo}\n\n## AST Data (use file paths from here for file_refs)\n${astContext}\n\n## Source Files\n${fileContext.slice(0, 4000)}`;
+  const seqContext = `${serviceInfo}\n\n## AST Data (use file paths+events from here)\n${astContext}\n\n## Source Files\n${fileContext.slice(0, 4000)}`;
   const seqText = await callLLM(seqPrompt, seqContext);
 
   let count = 0;
@@ -520,6 +588,9 @@ async function phaseGenerateFlows(
           flowType: obj.flow_type || "happy_path",
           content: obj.content,
           fileRefs: (obj.file_refs || "").split(",").map((f: string) => f.trim()).filter(Boolean),
+          eventsEmitted: (obj.events_emitted || "").split(",").map((e: string) => e.trim()).filter(Boolean),
+          eventsConsumed: (obj.events_consumed || "").split(",").map((e: string) => e.trim()).filter(Boolean),
+          sagaId: obj.saga_id || "",
           indexedAt: Date.now(),
         });
         count++;
@@ -531,7 +602,7 @@ async function phaseGenerateFlows(
   const statePrompt = `You are a Principal Software Architect. Identify ALL state machines in this service — entity lifecycles, status transitions, workflow states.
 
   For each state machine, output a JSON object on its own line:
-  {"name":"Order Lifecycle","flow_type":"state_machine","summary":"Complete state machine for order status transitions","keywords":"state,machine,order,lifecycle","linked":"","file_refs":"src/model/order.go:15,src/service/order.go:200","content":"## Order Lifecycle\\n\\n### Referenced Files\\n- src/model/order.go:15 — status constants\\n- src/service/order.go:200 — transition logic\\n\\n### Summary\\nOrder progresses through: PENDING → PAYMENT_PENDING → PAID → FULFILLMENT_INIT → COMPLETED\\n\\n\`\`\`mermaid\\nstateDiagram-v2\\n  [*] --> pending\\n  pending --> payment_pending: payment created\\n  payment_pending --> paid: payment confirmed\\n  payment_pending --> cancelled: timeout / user cancel\\n  paid --> fulfillment_init: fulfillment starts\\n  fulfillment_init --> completed: all items shipped\\n  completed --> [*]\\n  cancelled --> [*]\\n\`\`\`"}
+  {"name":"Order Lifecycle","flow_type":"state_machine","summary":"Complete state machine for order status transitions","keywords":"state,machine,order,lifecycle","linked":"","file_refs":"src/model/order.go:15,src/service/order.go:200","events_emitted":"order.status_changed","saga_id":"","content":"## Order Lifecycle\\n\\n### Referenced Files\\n- src/model/order.go:15 — status constants\\n- src/service/order.go:200 — transition logic\\n\\n### Summary\\nOrder progresses through: PENDING → PAYMENT_PENDING → PAID → FULFILLMENT_INIT → COMPLETED\\n\\n\`\`\`mermaid\\nstateDiagram-v2\\n  [*] --> pending\\n  pending --> payment_pending: payment created\\n  payment_pending --> paid: payment confirmed\\n  payment_pending --> cancelled: timeout / user cancel\\n  paid --> fulfillment_init: fulfillment starts\\n  fulfillment_init --> completed: all items shipped\\n  completed --> [*]\\n  cancelled --> [*]\\n\`\`\`"}
 
   CRITICAL — Mermaid v10.9 stateDiagram-v2 syntax rules (follow EXACTLY):
   1. State names: lowercase letters, digits, and underscores ONLY (snake_case). Never use CamelCase, PascalCase, spaces, or hyphens.
@@ -544,7 +615,8 @@ async function phaseGenerateFlows(
   6. Every state except [*] must have at least one incoming AND one outgoing transition.
   7. Transition labels after colon: keep under 40 chars, single line, no commas.
   8. "file_refs" MUST contain the specific files + line numbers where states are defined.
-  9. Output ONLY JSON lines (one per state machine, no markdown fences, no explanations).`;
+  9. "events_emitted" — events emitted on state transitions (e.g. "order.status_changed,order.cancelled")
+  10. Output ONLY JSON lines (one per state machine, no markdown fences, no explanations).`;
 
   const stateContext = `${serviceInfo}\n\n## AST Data\n${astContext}\n\n## Source Files (look for status enums, state constants, transition logic)\n${fileContext.slice(0, 6000)}`;
   const stateText = await callLLM(statePrompt, stateContext);
@@ -562,6 +634,9 @@ async function phaseGenerateFlows(
           flowType: "state_machine",
           content: obj.content,
           fileRefs: (obj.file_refs || "").split(",").map((f: string) => f.trim()).filter(Boolean),
+          eventsEmitted: (obj.events_emitted || "").split(",").map((e: string) => e.trim()).filter(Boolean),
+          eventsConsumed: [],
+          sagaId: obj.saga_id || "",
           indexedAt: Date.now(),
         });
         count++;

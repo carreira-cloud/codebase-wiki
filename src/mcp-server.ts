@@ -120,9 +120,12 @@ const TOOLS = [
         summary: { type: "string", description: "One-line description of the flow" },
         keywords: { type: "string", description: "Comma-separated keywords for discoverability" },
         linked_services: { type: "string", description: "Comma-separated services involved in this flow" },
-        flow_type: { type: "string", description: "happy_path, error_path, edge_case, recovery, full, or state_machine" },
+        flow_type: { type: "string", description: "happy_path, error_path, edge_case, recovery, full, state_machine, or saga" },
         content: { type: "string", description: "Mermaid diagram + text description" },
         file_refs: { type: "string", description: "Comma-separated source file paths referenced by this flow (e.g. 'src/handler/checkout.go:45,src/service/order.go:120')" },
+        events_emitted: { type: "string", description: "Comma-separated event names this flow publishes" },
+        events_consumed: { type: "string", description: "Comma-separated event names this flow subscribes to" },
+        saga_id: { type: "string", description: "Saga identifier linking related flows across services" },
       },
       required: ["service_name", "flow_name", "content"],
     },
@@ -356,6 +359,9 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<st
         flowType: (args.flow_type as WikiFlow["flowType"]) || "happy_path",
         content: args.content as string,
         fileRefs: typeof args.file_refs === "string" ? args.file_refs.split(",").map((f: string) => f.trim()) : [],
+        eventsEmitted: typeof args.events_emitted === "string" ? args.events_emitted.split(",").map((e: string) => e.trim()) : [],
+        eventsConsumed: typeof args.events_consumed === "string" ? args.events_consumed.split(",").map((e: string) => e.trim()) : [],
+        sagaId: (args.saga_id as string) || "",
         indexedAt: Date.now(),
       });
       return `Flow indexed: "${args.flow_name}" [${args.flow_type}]`;
@@ -367,7 +373,8 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<st
       return JSON.stringify(filtered.map(f => ({
         service: f.serviceName, flow: f.flowName, type: f.flowType,
         summary: f.summary, keywords: f.keywords, linked: f.linkedServices,
-        files: f.fileRefs,
+        files: f.fileRefs, events: {emitted: f.eventsEmitted, consumed: f.eventsConsumed},
+        saga: f.sagaId || undefined,
       })), null, 2);
     }
 
@@ -376,7 +383,8 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<st
       return JSON.stringify(flows.map(f => ({
         service: f.serviceName, flow: f.flowName, type: f.flowType,
         keywords: f.keywords, linked: f.linkedServices,
-        files: f.fileRefs,
+        files: f.fileRefs, events: {emitted: f.eventsEmitted, consumed: f.eventsConsumed},
+        saga: f.sagaId || undefined,
       })), null, 2);
     }
 

@@ -92,6 +92,9 @@ export class LanceDBClient {
         flow_type: flow.flowType,
         content: flow.content,
         file_refs: JSON.stringify(flow.fileRefs),
+        events_emitted: JSON.stringify(flow.eventsEmitted),
+        events_consumed: JSON.stringify(flow.eventsConsumed),
+        saga_id: flow.sagaId,
         indexed_at: flow.indexedAt,
       });
       writeFileSync(table, JSON.stringify(flows), "utf-8");
@@ -119,6 +122,9 @@ export class LanceDBClient {
       flowType: (r.flow_type as WikiFlow["flowType"]) || "happy_path",
       content: r.content as string,
       fileRefs: JSON.parse((r.file_refs as string) || "[]"),
+      eventsEmitted: JSON.parse((r.events_emitted as string) || "[]"),
+      eventsConsumed: JSON.parse((r.events_consumed as string) || "[]"),
+      sagaId: (r.saga_id as string) || "",
       indexedAt: r.indexed_at as number,
     }));
   }
@@ -139,6 +145,9 @@ export class LanceDBClient {
       flowType: (r.flow_type as WikiFlow["flowType"]) || "happy_path",
       content: r.content as string,
       fileRefs: JSON.parse((r.file_refs as string) || "[]"),
+      eventsEmitted: JSON.parse((r.events_emitted as string) || "[]"),
+      eventsConsumed: JSON.parse((r.events_consumed as string) || "[]"),
+      sagaId: (r.saga_id as string) || "",
       indexedAt: r.indexed_at as number,
     }));
   }

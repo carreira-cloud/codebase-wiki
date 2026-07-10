@@ -16,9 +16,12 @@ export interface WikiFlow {
   summary: string;
   keywords: string[];
   linkedServices: string[];
-  flowType: "happy_path" | "error_path" | "edge_case" | "recovery" | "full" | "state_machine";
+  flowType: "happy_path" | "error_path" | "edge_case" | "recovery" | "full" | "state_machine" | "saga";
   content: string;
   fileRefs: string[];
+  eventsEmitted: string[];
+  eventsConsumed: string[];
+  sagaId: string;
   indexedAt: number;
 }
 
