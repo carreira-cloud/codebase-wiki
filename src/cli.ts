@@ -121,9 +121,6 @@ program
 
 program
   .command("install-opencode")
-
-program
-  .command("install-opencode")
   .description("Install OpenCode skills & commands into .opencode/")
   .action(() => {
     const rootPath = process.cwd();

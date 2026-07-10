@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import type { WikiDoc, WikiNote } from "../types";
+import type { WikiDoc, WikiNote, WikiFlow } from "../types";
 
 interface Row {
   [key: string]: unknown;
@@ -91,13 +91,77 @@ export class LanceDBClient {
     return deleted;
   }
 
-  async stats(): Promise<{ services: number; totalChars: number; notes: number }> {
+  async addFlow(flow: WikiFlow): Promise<void> {
+    return this.withLock("flows", async () => {
+      const table = this.tablePath("flows");
+      const flows = this.readTable("flows");
+      flows.push({
+        id: flow.id,
+        service_name: flow.serviceName,
+        service_path: flow.servicePath,
+        flow_name: flow.flowName,
+        summary: flow.summary,
+        keywords: JSON.stringify(flow.keywords),
+        linked_services: JSON.stringify(flow.linkedServices),
+        flow_type: flow.flowType,
+        content: flow.content,
+        indexed_at: flow.indexedAt,
+      });
+      writeFileSync(table, JSON.stringify(flows), "utf-8");
+    });
+  }
+
+  async searchFlows(query: string): Promise<WikiFlow[]> {
+    const rows = this.readTable("flows");
+    const q = query.toLowerCase();
+    const matches = rows.filter(r =>
+      (r.flow_name as string)?.toLowerCase().includes(q) ||
+      (r.service_name as string)?.toLowerCase().includes(q) ||
+      (r.summary as string)?.toLowerCase().includes(q) ||
+      ((r.keywords as string) || "").toLowerCase().includes(q) ||
+      ((r.linked_services as string) || "").toLowerCase().includes(q) ||
+      (r.content as string)?.toLowerCase().includes(q)
+    );
+    return matches.slice(0, 15).map(r => ({
+      id: r.id as string,
+      serviceName: r.service_name as string,
+      servicePath: r.service_path as string,
+      flowName: r.flow_name as string,
+      summary: r.summary as string,
+      keywords: JSON.parse((r.keywords as string) || "[]"),
+      linkedServices: JSON.parse((r.linked_services as string) || "[]"),
+      flowType: (r.flow_type as WikiFlow["flowType"]) || "happy_path",
+      content: r.content as string,
+      indexedAt: r.indexed_at as number,
+    }));
+  }
+
+  async listFlows(serviceName?: string, flowType?: string): Promise<WikiFlow[]> {
+    const rows = this.readTable("flows");
+    let filtered = rows;
+    if (serviceName) filtered = filtered.filter(r => r.service_name === serviceName);
+    if (flowType) filtered = filtered.filter(r => r.flow_type === flowType);
+    return filtered.map(r => ({
+      id: r.id as string,
+      serviceName: r.service_name as string,
+      servicePath: r.service_path as string,
+      flowName: r.flow_name as string,
+      summary: r.summary as string,
+      keywords: JSON.parse((r.keywords as string) || "[]"),
+      linkedServices: JSON.parse((r.linked_services as string) || "[]"),
+      flowType: (r.flow_type as WikiFlow["flowType"]) || "happy_path",
+      content: r.content as string,
+      indexedAt: r.indexed_at as number,
+    }));
+  }
+
+  async stats(): Promise<{ services: number; totalChars: number; notes: number; flows: number }> {
     const docs = this.readTable("docs");
     const notes = this.readTable("notes");
+    const flows = this.readTable("flows");
     return {
-      services: docs.length,
-      totalChars: docs.reduce((sum, r) => sum + ((r.content as string)?.length || 0), 0),
-      notes: notes.length,
+      services: docs.length, totalChars: docs.reduce((s, r) => s + ((r.content as string)?.length || 0), 0),
+      notes: notes.length, flows: flows.length,
     };
   }
 

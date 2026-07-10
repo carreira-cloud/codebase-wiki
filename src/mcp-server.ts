@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import type { MCPRequest, MCPToolResponse, MCPListToolsResponse, WikiDoc, WikiNote } from "./types";
+import type { MCPRequest, MCPToolResponse, MCPListToolsResponse, WikiDoc, WikiNote, WikiFlow } from "./types";
 import { getClient } from "./lancedb/client";
 
 const DEFAULT_DB_PATH = ".codebase-wiki/rag_db";
@@ -105,6 +105,47 @@ const TOOLS = [
       type: "object",
       properties: {
         type: { type: "string", description: "Filter by note type (pattern, gotcha, integration, convention, decision, tip)" },
+      },
+    },
+  },
+  {
+    name: "wiki_flow_index",
+    description: "Index a workflow/sequence diagram — happy path, error path, edge case, or recovery flow",
+    inputSchema: {
+      type: "object",
+      properties: {
+        service_name: { type: "string" },
+        service_path: { type: "string" },
+        flow_name: { type: "string", description: "e.g. 'Checkout — Happy Path', 'Fulfillment Retry — Exponential Backoff'" },
+        summary: { type: "string", description: "One-line description of the flow" },
+        keywords: { type: "string", description: "Comma-separated keywords for discoverability" },
+        linked_services: { type: "string", description: "Comma-separated services involved in this flow" },
+        flow_type: { type: "string", description: "happy_path, error_path, edge_case, recovery, or full" },
+        content: { type: "string", description: "Mermaid diagram + text description" },
+      },
+      required: ["service_name", "flow_name", "content"],
+    },
+  },
+  {
+    name: "wiki_flow_search",
+    description: "Search indexed workflows by keyword — finds flows across all services",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string" },
+        service: { type: "string", description: "Optional: filter by service name" },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "wiki_flow_list",
+    description: "List all indexed workflows, optionally filtered by service or flow type",
+    inputSchema: {
+      type: "object",
+      properties: {
+        service: { type: "string" },
+        flow_type: { type: "string" },
       },
     },
   },
@@ -254,6 +295,36 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<st
         topic: n.topic,
         context: n.context,
         tags: n.tags,
+      })), null, 2);
+    }
+
+    case "wiki_flow_index": {
+      const id = Buffer.from(`${args.service_name}_${args.flow_name}`).toString("hex").slice(0, 12);
+      await client.addFlow({
+        id, serviceName: args.service_name as string, servicePath: (args.service_path as string) || "",
+        flowName: args.flow_name as string, summary: (args.summary as string) || "",
+        keywords: typeof args.keywords === "string" ? args.keywords.split(",").map((k: string) => k.trim()) : [],
+        linkedServices: typeof args.linked_services === "string" ? args.linked_services.split(",").map((s: string) => s.trim()) : [],
+        flowType: (args.flow_type as WikiFlow["flowType"]) || "happy_path",
+        content: args.content as string, indexedAt: Date.now(),
+      });
+      return `Flow indexed: "${args.flow_name}" [${args.flow_type}]`;
+    }
+
+    case "wiki_flow_search": {
+      const flows = await client.searchFlows(args.query as string);
+      const filtered = args.service ? flows.filter(f => f.serviceName === args.service) : flows;
+      return JSON.stringify(filtered.map(f => ({
+        service: f.serviceName, flow: f.flowName, type: f.flowType,
+        summary: f.summary, keywords: f.keywords, linked: f.linkedServices,
+      })), null, 2);
+    }
+
+    case "wiki_flow_list": {
+      const flows = await client.listFlows((args.service as string) || undefined, (args.flow_type as string) || undefined);
+      return JSON.stringify(flows.map(f => ({
+        service: f.serviceName, flow: f.flowName, type: f.flowType,
+        keywords: f.keywords, linked: f.linkedServices,
       })), null, 2);
     }
 

@@ -8,6 +8,19 @@ export interface WikiDoc {
   indexedAt: number;
 }
 
+export interface WikiFlow {
+  id: string;
+  serviceName: string;
+  servicePath: string;
+  flowName: string;
+  summary: string;
+  keywords: string[];
+  linkedServices: string[];
+  flowType: "happy_path" | "error_path" | "edge_case" | "recovery" | "full";
+  content: string;
+  indexedAt: number;
+}
+
 export interface WikiNote {
   id: string;
   type: "pattern" | "gotcha" | "integration" | "convention" | "decision" | "tip";
